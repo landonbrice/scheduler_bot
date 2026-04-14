@@ -30,11 +30,13 @@ def main() -> None:
     from google_auth_oauthlib.flow import InstalledAppFlow
 
     flow = InstalledAppFlow.from_client_secrets_file(str(CREDS_PATH), SCOPES)
-    print("→ starting local auth server on 0.0.0.0:8080")
-    print("  Open the URL below from any device that can reach this Mac (Tailscale works).")
-    print("  If the redirect doesn't resolve from your laptop, replace 'localhost' in the URL")
-    print("  with this Mac's Tailscale hostname / IP.")
-    creds = flow.run_local_server(host="0.0.0.0", port=8080, open_browser=False)
+    print("→ starting local auth server on localhost:8080")
+    print("  Google OAuth for Desktop apps only accepts localhost/127.0.0.1 as redirect URIs.")
+    print("  Since this Mac is headless, SSH-port-forward 8080 from your laptop before")
+    print("  opening the URL:")
+    print("      ssh -L 8080:localhost:8080 <this-mac>")
+    print("  Then open the authorization URL below in your LAPTOP browser.")
+    creds = flow.run_local_server(host="localhost", port=8080, open_browser=False)
     TOKEN_PATH.write_text(creds.to_json())
     print(f"✓ token saved to {TOKEN_PATH}")
 
