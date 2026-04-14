@@ -1,7 +1,11 @@
 from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime
+from typing import TYPE_CHECKING
 from .tasks_store import Task
+
+if TYPE_CHECKING:
+    from .gcal import CalendarEvent
 
 
 def _parse_due(t: Task) -> date:
@@ -12,7 +16,11 @@ def _fmt(d: date) -> str:
     return d.strftime("%a %b %-d")
 
 
-def generate_briefing(tasks: list[Task], today: date) -> str:
+def generate_briefing(
+    tasks: list[Task],
+    today: date,
+    events: list["CalendarEvent"] | None = None,
+) -> str:
     active = [t for t in tasks if not t.done]
     # "This week" = through the upcoming Friday of the current work week.
     # "Next week" = after that, through the following Friday (+7 days).
@@ -35,6 +43,18 @@ def generate_briefing(tasks: list[Task], today: date) -> str:
 
     lines: list[str] = []
     lines.append(f"☀️ *{today.strftime('%A, %B %-d')}*\n")
+
+    today_events = [e for e in (events or []) if e.start.date() == today]
+    today_events.sort(key=lambda e: e.start)
+    if today_events:
+        lines.append("📅 *TODAY'S SCHEDULE*")
+        for e in today_events:
+            if e.all_day:
+                lines.append(f"  • all-day — {e.summary}")
+            else:
+                local = e.start.astimezone()
+                lines.append(f"  • {local.strftime('%-I:%M %p')} — {e.summary}")
+        lines.append("")
 
     if overdue:
         lines.append("🔴 *OVERDUE*")

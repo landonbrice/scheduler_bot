@@ -54,3 +54,37 @@ def test_counts_line_reflects_active_and_week():
     text = generate_briefing(tasks, today=date(2026, 4, 13))
     assert "Active: 2 tasks" in text
     assert "This week: 1" in text
+
+
+def test_today_schedule_block_renders_events_before_overdue():
+    from datetime import datetime, timezone
+    from backend.gcal import CalendarEvent
+    tasks = [_t("old", "APES", "Old thing", "2026-04-10")]
+    events = [
+        CalendarEvent(summary="APES Lecture",
+                      start=datetime(2026, 4, 13, 9, 30, tzinfo=timezone.utc),
+                      end=datetime(2026, 4, 13, 10, 10, tzinfo=timezone.utc), all_day=False),
+        CalendarEvent(summary="SCS III",
+                      start=datetime(2026, 4, 13, 15, 0, tzinfo=timezone.utc),
+                      end=datetime(2026, 4, 13, 16, 20, tzinfo=timezone.utc), all_day=False),
+    ]
+    text = generate_briefing(tasks, today=date(2026, 4, 13), events=events)
+    assert "TODAY'S SCHEDULE" in text
+    assert "APES Lecture" in text
+    assert "SCS III" in text
+    assert text.index("TODAY'S SCHEDULE") < text.index("OVERDUE")
+
+
+def test_events_from_other_days_excluded():
+    from datetime import datetime, timezone
+    from backend.gcal import CalendarEvent
+    events = [CalendarEvent(summary="Tomorrow meeting",
+                            start=datetime(2026, 4, 14, 9, 0, tzinfo=timezone.utc),
+                            end=datetime(2026, 4, 14, 10, 0, tzinfo=timezone.utc), all_day=False)]
+    text = generate_briefing([], today=date(2026, 4, 13), events=events)
+    assert "TODAY'S SCHEDULE" not in text
+
+
+def test_no_events_argument_is_backward_compatible():
+    text = generate_briefing([], today=date(2026, 4, 13))
+    assert "TODAY'S SCHEDULE" not in text

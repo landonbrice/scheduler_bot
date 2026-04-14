@@ -31,7 +31,9 @@ def _open_dashboard_markup(miniapp_url: str) -> InlineKeyboardMarkup | None:
 async def _send_briefing(app: Application, chat_id: str, miniapp_url: str) -> None:
     settings = load_settings()
     store = TasksStore(settings.tasks_path)
-    text = generate_briefing(store.list(), today=date.today())
+    from .gcal import fetch_events
+    events = fetch_events(date.today(), days=1)
+    text = generate_briefing(store.list(), today=date.today(), events=events)
     await app.bot.send_message(
         chat_id=chat_id,
         text=text,
@@ -51,7 +53,9 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_briefing(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     settings = load_settings()
     store = TasksStore(settings.tasks_path)
-    text = generate_briefing(store.list(), today=date.today())
+    from .gcal import fetch_events
+    events = fetch_events(date.today(), days=1)
+    text = generate_briefing(store.list(), today=date.today(), events=events)
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN,

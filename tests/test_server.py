@@ -77,3 +77,28 @@ def test_briefing_endpoint_returns_text(client):
     assert r.status_code == 200
     assert isinstance(r.json()["text"], str)
     assert len(r.json()["text"]) > 0
+
+
+def test_calendar_endpoint_returns_events_list(client, monkeypatch):
+    from backend import server as server_module
+    from backend.gcal import CalendarEvent
+    from datetime import datetime, timezone
+
+    fake = [CalendarEvent(
+        summary="APES Lecture",
+        start=datetime(2026, 4, 14, 9, 30, tzinfo=timezone.utc),
+        end=datetime(2026, 4, 14, 10, 10, tzinfo=timezone.utc),
+        all_day=False,
+    )]
+    monkeypatch.setattr(server_module, "fetch_events", lambda today, days=7: fake)
+    r = client.get("/api/calendar", headers={"X-Telegram-Init-Data": _init_data()})
+    assert r.status_code == 200
+    events = r.json()["events"]
+    assert len(events) == 1
+    assert events[0]["summary"] == "APES Lecture"
+    assert events[0]["all_day"] is False
+
+
+def test_calendar_endpoint_requires_auth(client):
+    r = client.get("/api/calendar")
+    assert r.status_code == 401

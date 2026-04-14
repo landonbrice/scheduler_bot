@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from .auth import verify_init_data, InitDataInvalid, TelegramUser
 from .briefing import generate_briefing
 from .config import load_settings, PROJECT_ROOT
+from .gcal import fetch_events
 from .tasks_store import Task, TasksStore, TaskNotFoundError
 
 
@@ -94,9 +95,16 @@ def add_task(body: AddTaskBody, _: TelegramUser = Depends(current_user)):
     return {"task": task.__dict__}
 
 
+@app.get("/api/calendar")
+def get_calendar(_: TelegramUser = Depends(current_user)):
+    events = fetch_events(date.today(), days=7)
+    return {"events": [e.as_dict() for e in events]}
+
+
 @app.get("/api/briefing")
 def get_briefing(_: TelegramUser = Depends(current_user)):
-    text = generate_briefing(store.list(), today=date.today())
+    events = fetch_events(date.today(), days=1)
+    text = generate_briefing(store.list(), today=date.today(), events=events)
     return {"text": text}
 
 
