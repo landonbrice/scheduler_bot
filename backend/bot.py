@@ -93,6 +93,9 @@ def run_bot() -> None:
     settings = load_settings()
     app = _build_app(settings.telegram_bot_token)
     log.info("Polling bot started. miniapp_url=%s", settings.miniapp_url or "(not set)")
+    # Python 3.14 removed asyncio.get_event_loop()'s implicit-create behavior that
+    # python-telegram-bot 21 relies on. Provide a loop explicitly.
+    asyncio.set_event_loop(asyncio.new_event_loop())
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
