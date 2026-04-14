@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import type { Task, View } from "./types";
+import type { Task, View, CalendarEvent } from "./types";
 import { daysUntil } from "./utils";
 import { Header } from "./components/Header";
 import { AlertBanner } from "./components/AlertBanner";
@@ -10,17 +10,23 @@ import { Milestones } from "./components/Milestones";
 import { TaskList } from "./components/TaskList";
 import { AddTaskForm } from "./components/AddTaskForm";
 import { CrunchNotice } from "./components/CrunchNotice";
+import { TodaySchedule } from "./components/TodaySchedule";
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [filter, setFilter] = useState<string>("all");
   const [view, setView] = useState<View>("priority");
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
-      const { tasks } = await api.listTasks();
+      const [{ tasks }, { events }] = await Promise.all([
+        api.listTasks(),
+        api.calendar().catch(() => ({ events: [] as CalendarEvent[] })),
+      ]);
       setTasks(tasks);
+      setEvents(events);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -60,6 +66,7 @@ export default function App() {
     <div className="min-h-screen bg-bg text-neutral-200 p-4 max-w-3xl mx-auto">
       <Header today={today} activeCount={active.length} weekCount={dueTodayOrSoon.length} />
       {error && <div className="mb-3 p-2 rounded bg-red-950 border border-red-800 text-xs text-red-300">{error}</div>}
+      <TodaySchedule events={events} />
       <AlertBanner thisWeek={dueTodayOrSoon} />
       <CourseStats tasks={tasks} filter={filter} onFilter={setFilter} />
       <ViewToggle view={view} onView={setView} filter={filter} onResetFilter={() => setFilter("all")} />

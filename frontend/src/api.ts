@@ -1,5 +1,5 @@
 import { initData } from "./telegram";
-import type { Task } from "./types";
+import type { Task, CalendarEvent } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -21,4 +21,5 @@ export const api = {
   addTask: (body: Omit<Task, "id" | "done">) =>
     request<{ task: Task }>("/api/tasks", { method: "POST", body: JSON.stringify(body) }),
   briefing: () => request<{ text: string }>("/api/briefing"),
+  calendar: () => request<{ events: CalendarEvent[] }>("/api/calendar"),
 };

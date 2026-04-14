@@ -10,3 +10,10 @@ export type Task = {
 };
 
 export type View = "priority" | "timeline" | "course";
+
+export type CalendarEvent = {
+  summary: string;
+  start: string;  // ISO string with timezone
+  end: string;
+  all_day: boolean;
+};
