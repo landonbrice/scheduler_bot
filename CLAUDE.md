@@ -20,6 +20,8 @@ Personal academic scheduler for UChicago Spring 2026. Telegram Mini App + daily 
 - **Quick Tunnel URL rotates** on every cloudflared restart. Always rerun `./scripts/refresh_tunnel.sh` after reboots — it rewrites `.env` and re-points the Telegram menu button.
 - **pytest-asyncio on 3.14** prints hundreds of deprecation warnings. Cosmetic; tests pass.
 - **Bot can't DM you unless you `/start` it once.** Cron sends will silently fail otherwise.
+- **Google OAuth for Desktop apps rejects `0.0.0.0` as redirect URI.** `scripts/setup_google.py` binds to `localhost:8080` — run on Mac directly or SSH port-forward 8080. Add your Google account as a test user in the OAuth consent screen (app stays in "Testing" mode for personal use; no verification needed).
+- **Google token refresh**: `Credentials.from_authorized_user_file` auto-refreshes expired tokens when `refresh_token` is present. If refresh fails (revoked, scope changed), `fetch_events` returns `[]` and logs a warning — rerun `scripts/setup_google.py` to re-auth.
 
 ## Tests
 `pytest -v` — 24 tests across `tests/test_{tasks_store,auth,briefing,server}.py`. No React tests (pragmatic); verify UI manually in Telegram.
@@ -29,9 +31,9 @@ Personal academic scheduler for UChicago Spring 2026. Telegram Mini App + daily 
 - TS: strict mode, `noUnusedLocals`. Global `Window.Telegram` typed in `frontend/src/telegram.ts`.
 - Dates: backend uses real `date.today()`; frontend uses real `new Date()`. (JSX mockup hardcoded 2026-04-13 — do not propagate.)
 
-## Status (as of 2026-04-13)
+## Status (as of 2026-04-14)
 - ✅ Backend + Mini App + bot + cron live end-to-end.
-- ⏭️ **Next: Google Calendar integration** — `setup_google.py` OAuth helper + `/api/calendar` endpoint + briefing augmentation. Scope per `CLAUDE_CODE_DIRECTIONS.md` §3 and §4.
+- ✅ Google Calendar integration live (`backend/gcal.py`, `/api/calendar`, briefing "TODAY'S SCHEDULE" block, Mini App schedule rail). Credentials at `~/.config/scheduler-bot/google_{creds,token}.json`. Fetches merge events across all visible calendars (not just primary). Fetch fails soft — returns `[]` on missing token.
 - ⏭️ Later: Claude-enhanced briefings (Anthropic API); extra bot commands (`/list`, `/done`, `/add`, `/undo`, `/week`, `/crunch`).
 
 ## Reference
