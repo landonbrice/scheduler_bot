@@ -1,17 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { tg } from "./telegram";
 import "./index.css";
 
-declare global {
-  interface Window {
-    Telegram?: any;
-  }
-}
-
-const tg = window.Telegram?.WebApp;
-tg?.ready();
-tg?.expand();
+tg()?.ready();
+tg()?.expand();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
