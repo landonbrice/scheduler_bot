@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/tasks.json
+data/*.bak
+backend/static/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+briefing.log
+.tunnel_url
