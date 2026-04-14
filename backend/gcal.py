@@ -63,18 +63,38 @@ def events_from_api_response(api: dict) -> list[CalendarEvent]:
     return out
 
 
-def fetch_events_with_service(service: Any, today: date, days: int = 7) -> list[CalendarEvent]:
+def fetch_events_with_service(
+    service: Any,
+    today: date,
+    days: int = 7,
+    calendar_ids: list[str] | None = None,
+) -> list[CalendarEvent]:
+    """Fetch events across one or more calendars, merged and sorted by start time.
+
+    If calendar_ids is None, discovers every calendar visible to the account
+    (via calendarList). Pass an explicit list to restrict scope (e.g. ["primary"]).
+    """
     time_min = datetime.combine(today, time.min, tzinfo=timezone.utc).isoformat()
     time_max = datetime.combine(today + timedelta(days=days), time.min, tzinfo=timezone.utc).isoformat()
-    resp = service.events().list(
-        calendarId="primary",
-        timeMin=time_min,
-        timeMax=time_max,
-        singleEvents=True,
-        orderBy="startTime",
-        maxResults=50,
-    ).execute()
-    return events_from_api_response(resp)
+
+    if calendar_ids is None:
+        cl = service.calendarList().list(minAccessRole="reader").execute()
+        calendar_ids = [c["id"] for c in cl.get("items", [])]
+
+    events: list[CalendarEvent] = []
+    for cid in calendar_ids:
+        resp = service.events().list(
+            calendarId=cid,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=50,
+        ).execute()
+        events.extend(events_from_api_response(resp))
+
+    events.sort(key=lambda e: e.start)
+    return events
 
 
 def _build_service() -> Any:
