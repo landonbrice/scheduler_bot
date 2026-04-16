@@ -240,6 +240,62 @@ async def cmd_help(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.MARKDOWN)
 
 
+async def cb_capture(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cq = update.callback_query
+    await cq.answer()
+    data = cq.data or ""
+    if not data.startswith("capt:"):
+        return
+    _, action, pending_id = data.split(":", 2)
+    pending = context.bot_data.get("pending", {}).pop(pending_id, None)
+    if pending is None:
+        await cq.edit_message_text("(This button has expired.)")
+        return
+
+    deps: CaptureDeps = context.bot_data["deps"]
+    raw_text = pending["raw_text"]
+    suggested = pending["suggested_task"]
+
+    if action == "create":
+        chat_id, _, msg_id = pending_id.partition("-")
+        outcome = await confirm_create_task(
+            suggested, raw_text=raw_text,
+            chat_id=int(chat_id), message_id=int(msg_id), deps=deps,
+        )
+        await cq.edit_message_text(_format_task_reply(outcome), parse_mode=ParseMode.MARKDOWN)
+    elif action == "thought":
+        await cq.edit_message_text("💭 Kept as a thought.")
+    elif action == "later":
+        from datetime import timedelta
+        trigger = (deps.today_fn() + timedelta(days=3)).isoformat()
+        write_resurface(deps, text=raw_text, trigger_date=trigger, trigger_raw=None)
+        await cq.edit_message_text(f"🔁 Will resurface on {trigger}.")
+    else:
+        await cq.edit_message_text("(Unknown action.)")
+
+
+async def on_text_maybe_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.message
+    if not msg or not msg.text:
+        return
+    if msg.text.strip().lower() != "undo":
+        return
+    deps: CaptureDeps = context.bot_data["deps"]
+    entry = deps.undo.pop_latest(chat_id=msg.chat_id)
+    if entry is None:
+        await msg.reply_text("Nothing to undo in the last 60 seconds.")
+        return
+    try:
+        # Delete by rewriting tasks without the target id.
+        remaining = [t for t in deps.tasks.list() if t.id != entry.task_id]
+        deps.tasks.replace_all(remaining)
+    except Exception:
+        log.warning("undo failed to delete task %s", entry.task_id, exc_info=True)
+        await msg.reply_text(f"Couldn't revert task {entry.task_id}.")
+        return
+    await msg.reply_text(f"Reverted task {entry.task_id}.")
+
+
 def _build_app(token: str) -> Application:
     settings = load_settings()
     app = Application.builder().token(token).build()
@@ -255,6 +311,8 @@ def _build_app(token: str) -> Application:
     app.add_handler(CommandHandler("return", cmd_return))
     app.add_handler(CommandHandler("recall", cmd_recall))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CallbackQueryHandler(cb_capture, pattern=r"^capt:"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text_maybe_undo))
     return app
 
 

@@ -187,3 +187,105 @@ async def test_cmd_help_does_not_claim_add_done_undo_exist_as_bot_commands(tmp_p
     # present them as bot commands (would mislead users who try /done and
     # get silent "unknown command").
     assert "/done" not in reply.split("Mini App")[0]  # should not appear before the Mini App note
+
+
+@dataclass
+class _FakeCallbackQuery:
+    data: str
+    message: _FakeMessage
+    from_user_id: int = 1
+    answers: list = None
+    edited: list = None
+
+    def __post_init__(self):
+        self.answers = []
+        self.edited = []
+
+    async def answer(self, text=None, **kwargs):
+        self.answers.append(text)
+
+    async def edit_message_text(self, text, **kwargs):
+        self.edited.append(text)
+
+
+@dataclass
+class _CallbackUpdate:
+    callback_query: _FakeCallbackQuery
+
+    @property
+    def effective_chat(self):
+        class _C:
+            id = 1
+        return _C()
+
+
+@pytest.mark.asyncio
+async def test_callback_create_task_creates_task(tmp_path):
+    from backend.bot import cb_capture
+    def cls(*a, **kw):
+        raise AssertionError("no classifier during callback")
+    ctx, _ = _build_context_with_deps(tmp_path, cls)
+    pending_id = "1-10"
+    ctx.bot_data.setdefault("pending", {})[pending_id] = {
+        "raw_text": "call mom",
+        "suggested_task": SuggestedTask("life", "call mom", None, "admin", None),
+    }
+    msg = _FakeMessage(text="buttons", chat_id=1, message_id=11)
+    cq = _FakeCallbackQuery(data=f"capt:create:{pending_id}", message=msg)
+    await cb_capture(_CallbackUpdate(callback_query=cq), ctx)
+    tasks = ctx.bot_data["deps"].tasks.list()
+    assert any(t.name == "call mom" for t in tasks)
+    assert cq.edited and "Task created" in cq.edited[0]
+
+
+@pytest.mark.asyncio
+async def test_callback_thought_does_not_create_task(tmp_path):
+    from backend.bot import cb_capture
+    ctx, _ = _build_context_with_deps(tmp_path, lambda *a, **kw: None)
+    pending_id = "1-10"
+    ctx.bot_data.setdefault("pending", {})[pending_id] = {
+        "raw_text": "idea x", "suggested_task": None,
+    }
+    msg = _FakeMessage(text="buttons", chat_id=1, message_id=11)
+    cq = _FakeCallbackQuery(data=f"capt:thought:{pending_id}", message=msg)
+    await cb_capture(_CallbackUpdate(callback_query=cq), ctx)
+    assert ctx.bot_data["deps"].tasks.list() == []
+    assert cq.edited and "thought" in cq.edited[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_undo_within_window_deletes_task(tmp_path):
+    from backend.bot import on_text_maybe_undo
+    ctx, _ = _build_context_with_deps(tmp_path, lambda *a, **kw: None)
+    deps = ctx.bot_data["deps"]
+    # Seed a task + undo entry
+    from backend.tasks_store import Task
+    t = Task(id="x-1", course="life", name="n", due="2026-04-20", type="admin", weight="", done=False)
+    deps.tasks.add(t)
+    deps.undo.register(chat_id=1, message_id=100, task_id="x-1")
+
+    msg = _FakeMessage(text="undo", chat_id=1, message_id=200)
+    await on_text_maybe_undo(_FakeUpdate(message=msg), ctx)
+    assert deps.tasks.list() == []
+    assert any("Reverted" in r[0] for r in msg.replies)
+
+
+@pytest.mark.asyncio
+async def test_undo_without_pending_is_noop(tmp_path):
+    from backend.bot import on_text_maybe_undo
+    ctx, _ = _build_context_with_deps(tmp_path, lambda *a, **kw: None)
+    msg = _FakeMessage(text="undo", chat_id=1, message_id=200)
+    await on_text_maybe_undo(_FakeUpdate(message=msg), ctx)
+    # No reply is fine (not-our-message style), OR an explicit "nothing to undo".
+    # We assert no crash and no task changes.
+    assert ctx.bot_data["deps"].tasks.list() == []
+
+
+@pytest.mark.asyncio
+async def test_non_undo_text_is_ignored(tmp_path):
+    from backend.bot import on_text_maybe_undo
+    ctx, _ = _build_context_with_deps(tmp_path, lambda *a, **kw: None)
+    msg = _FakeMessage(text="hello there", chat_id=1, message_id=200)
+    await on_text_maybe_undo(_FakeUpdate(message=msg), ctx)
+    # Silent: no reply, no crash.
+    assert msg.replies == []
