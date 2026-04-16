@@ -258,3 +258,40 @@ async def test_recall_empty_query_returns_usage(tmp_path):
     deps, _ = _deps_with_search(tmp_path, mem)
     outcome = await process_recall("", deps=deps, memory_search=mem.search)
     assert outcome.kind == "usage"
+
+
+@pytest.mark.asyncio
+async def test_confirm_create_task_whitespace_raw_text_uses_fallback(tmp_path):
+    from backend.capture import confirm_create_task
+    mem = FakeMemoryWithSearch()
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await confirm_create_task(
+        suggested=None, raw_text="   ",
+        chat_id=1, message_id=10, deps=deps,
+    )
+    assert outcome.kind == "task_created"
+    assert outcome.task.name == "captured note"
+
+
+@pytest.mark.asyncio
+async def test_think_propagates_membase_queued(tmp_path):
+    mem = FakeMemoryWithSearch(store_ok=False)
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_think("thought", deps=deps, memory_search=mem.search)
+    assert outcome.membase_queued is True
+
+
+@pytest.mark.asyncio
+async def test_return_propagates_membase_queued(tmp_path):
+    mem = FakeMemoryWithSearch(store_ok=False)
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_return("later thing", deps=deps)
+    assert outcome.membase_queued is True
+
+
+@pytest.mark.asyncio
+async def test_return_tomorrow_keyword(tmp_path):
+    mem = FakeMemoryWithSearch()
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_return("read article | tomorrow", deps=deps)
+    assert outcome.trigger_date == "2026-04-17"

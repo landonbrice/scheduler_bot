@@ -159,13 +159,13 @@ async def process_think(text: str, *, deps: CaptureDeps, memory_search: MemorySe
     text = text.strip()
     if not text:
         return CaptureOutcome(kind="usage")
-    await _store_or_queue(deps, f"[THINKING] {text}", None)
+    queued = await _store_or_queue(deps, f"[THINKING] {text}", None)
     try:
         hits = await memory_search(text, 3)
     except Exception:
         log.warning("memory_search failed on /think", exc_info=True)
         hits = []
-    return CaptureOutcome(kind="thought_saved", recall_hits=hits)
+    return CaptureOutcome(kind="thought_saved", recall_hits=hits, membase_queued=queued)
 
 
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -184,6 +184,9 @@ def _parse_return_trigger(raw: str, today: date) -> tuple[str | None, str | None
 
     _, trigger = raw.split("|", 1)
     trigger = trigger.strip().lower()
+
+    if trigger == "tomorrow":
+        return (today + timedelta(days=1)).isoformat(), None
 
     m = re.match(r"in\s+(\d+)\s+days?", trigger)
     if m:
@@ -213,9 +216,9 @@ async def process_return(raw: str, *, deps: CaptureDeps) -> CaptureOutcome:
     trigger_date, trigger_raw = _parse_return_trigger(raw, today)
     text = _text_before_pipe(raw)
     annotation = f" (resurface on {trigger_date})" if trigger_date else " (no auto-trigger)"
-    await _store_or_queue(deps, f"[RETURN] {text}{annotation}", None)
+    queued = await _store_or_queue(deps, f"[RETURN] {text}{annotation}", None)
     write_resurface(deps, text=text, trigger_date=trigger_date, trigger_raw=trigger_raw)
-    return CaptureOutcome(kind="resurface_saved", trigger_date=trigger_date)
+    return CaptureOutcome(kind="resurface_saved", trigger_date=trigger_date, membase_queued=queued)
 
 
 async def process_recall(query: str, *, deps: CaptureDeps, memory_search: MemorySearch) -> CaptureOutcome:
@@ -247,7 +250,7 @@ async def confirm_create_task(
     if suggested is None:
         suggested = SuggestedTask(
             category="life",
-            name=raw_text[:80] or "captured note",
+            name=raw_text.strip()[:80] or "captured note",
             due=(today + timedelta(days=DEFAULT_TASK_DUE_OFFSET_DAYS)).isoformat(),
             type="admin",
             weight=None,
