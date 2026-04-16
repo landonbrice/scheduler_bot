@@ -18,6 +18,7 @@ export default function App() {
   const [filter, setFilter] = useState<string>("all");
   const [view, setView] = useState<View>("priority");
   const [error, setError] = useState<string | null>(null);
+  const [authExpired, setAuthExpired] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -28,8 +29,14 @@ export default function App() {
       setTasks(tasks);
       setEvents(events);
       setError(null);
+      setAuthExpired(false);
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      if (msg.includes("401")) {
+        setAuthExpired(true);
+      } else {
+        setError(msg);
+      }
     }
   }, []);
 
@@ -65,6 +72,11 @@ export default function App() {
   return (
     <div className="min-h-screen bg-bg text-neutral-200 p-4 max-w-3xl mx-auto">
       <Header today={today} activeCount={active.length} weekCount={dueTodayOrSoon.length} />
+      {authExpired && (
+        <div className="mb-3 p-3 rounded bg-yellow-950 border border-yellow-800 text-xs text-yellow-300 text-center">
+          Session expired — please close and reopen from Telegram.
+        </div>
+      )}
       {error && <div className="mb-3 p-2 rounded bg-red-950 border border-red-800 text-xs text-red-300">{error}</div>}
       <TodaySchedule events={events} />
       <AlertBanner thisWeek={dueTodayOrSoon} />

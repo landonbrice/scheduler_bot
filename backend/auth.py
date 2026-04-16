@@ -18,7 +18,7 @@ class TelegramUser:
     username: str | None
 
 
-def verify_init_data(init_data: str, bot_token: str, max_age_seconds: int = 86400) -> TelegramUser:
+def verify_init_data(init_data: str, bot_token: str, max_age_seconds: int = 0) -> TelegramUser:
     """Validate a Telegram Mini App initData string.
 
     Raises InitDataInvalid on any failure. Returns the parsed user on success.
@@ -41,8 +41,10 @@ def verify_init_data(init_data: str, bot_token: str, max_age_seconds: int = 8640
         raise InitDataInvalid("hash mismatch")
 
     auth_date = int(data.get("auth_date", "0"))
-    if auth_date <= 0 or (time.time() - auth_date) > max_age_seconds:
-        raise InitDataInvalid("auth_date expired or missing")
+    if auth_date <= 0:
+        raise InitDataInvalid("auth_date missing")
+    if max_age_seconds > 0 and (time.time() - auth_date) > max_age_seconds:
+        raise InitDataInvalid("auth_date expired")
 
     user_json = data.get("user")
     if not user_json:
