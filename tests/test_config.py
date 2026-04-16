@@ -1,13 +1,13 @@
 from backend.config import load_settings
 
 
-def test_anthropic_api_key_loads_from_env(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+def test_deepseek_api_key_loads_from_env(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
     s = load_settings()
-    assert s.anthropic_api_key == "sk-ant-test"
+    assert s.deepseek_api_key == "sk-deepseek-test"
 
 
-def test_anthropic_api_key_defaults_to_empty(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_deepseek_api_key_defaults_to_empty(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     s = load_settings()
-    assert s.anthropic_api_key == ""
+    assert s.deepseek_api_key == ""

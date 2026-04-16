@@ -1,20 +1,19 @@
 from __future__ import annotations
-import json
 from datetime import date
 import pytest
 from backend.classifier import classify, ClassifyResult, SuggestedTask
 
 
-def _fake_anthropic(result_json: dict):
-    """Return a callable matching the classifier's `call_tool` signature
-    that echoes the given tool-use result."""
-    def _call(system: str, user: str, tool_schema: dict) -> dict:
+def _fake_llm(result_json: dict):
+    """Return a callable matching the classifier's call signature that echoes
+    the given result. The DI contract is (system, user) -> dict."""
+    def _call(system: str, user: str) -> dict:
         return result_json
     return _call
 
 
 def test_classifies_as_task_with_date():
-    fake = _fake_anthropic({
+    fake = _fake_llm({
         "kind": "task",
         "confidence": 0.9,
         "suggested_task": {
@@ -33,7 +32,7 @@ def test_classifies_as_task_with_date():
 
 
 def test_classifies_as_thought_with_no_suggested_task():
-    fake = _fake_anthropic({
+    fake = _fake_llm({
         "kind": "thought",
         "confidence": 0.85,
         "suggested_task": None,
@@ -46,7 +45,7 @@ def test_classifies_as_thought_with_no_suggested_task():
 
 
 def test_ambiguous_falls_back_to_inline_buttons_via_low_confidence():
-    fake = _fake_anthropic({
+    fake = _fake_llm({
         "kind": "task", "confidence": 0.4,
         "suggested_task": {"category": "life", "name": "call mom", "due": None, "type": "admin", "weight": None},
         "tags": ["life"],
@@ -56,7 +55,7 @@ def test_ambiguous_falls_back_to_inline_buttons_via_low_confidence():
     assert result.confidence == 0.4
 
 
-def test_anthropic_failure_returns_ambiguous():
+def test_llm_failure_returns_ambiguous():
     def broken_call(*args, **kwargs):
         raise RuntimeError("api down")
     result = classify("anything", date(2026, 4, 16), call=broken_call)
@@ -74,7 +73,7 @@ def test_malformed_json_returns_ambiguous():
 
 
 def test_missing_api_key_short_circuits_to_ambiguous(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     result = classify("anything", date(2026, 4, 16), call=None)
     assert result.kind == "ambiguous"
 

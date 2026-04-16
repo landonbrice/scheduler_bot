@@ -1,13 +1,19 @@
-"""Anthropic-backed classifier for captured thoughts.
+"""DeepSeek-backed classifier for captured thoughts.
 
 Public API:
     classify(text, today, *, call=None) -> ClassifyResult
 
 `call` is an optional dependency-injected callable used in tests. In
-production it is None and the module builds a live Anthropic client
-from the ANTHROPIC_API_KEY env var. If no API key is available or the
-call fails for any reason, returns an ambiguous result with confidence
-0.0 — callers then fall through to the inline-button flow.
+production it is None and the module builds a live OpenAI client
+pointed at DeepSeek from the DEEPSEEK_API_KEY env var. If no API key is
+available or the call fails for any reason, returns an ambiguous result
+with confidence 0.0 — callers then fall through to the inline-button
+flow.
+
+DeepSeek's API is OpenAI-compatible. We use JSON mode
+(response_format={"type": "json_object"}) with the schema described in
+the system prompt; this is more reliable than function-calling with
+DeepSeek's current models.
 """
 from __future__ import annotations
 import json
@@ -29,34 +35,12 @@ TASK_TYPES = [
     "presentation", "reading", "ai-tutor", "admin",
 ]
 
-_MODEL = "claude-haiku-4-5"
+_MODEL = "deepseek-chat"
+_BASE_URL = "https://api.deepseek.com"
 
-_TOOL_SCHEMA = {
-    "name": "classify_thought",
-    "description": "Classify a captured thought and optionally extract a task.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "kind": {"type": "string", "enum": ["task", "thought", "resurface", "ambiguous"]},
-            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-            "suggested_task": {
-                "type": ["object", "null"],
-                "properties": {
-                    "category": {"type": "string", "enum": CATEGORIES},
-                    "name": {"type": "string"},
-                    "due": {"type": ["string", "null"], "description": "ISO YYYY-MM-DD or null"},
-                    "type": {"type": "string", "enum": TASK_TYPES},
-                    "weight": {"type": ["string", "null"]},
-                },
-                "required": ["category", "name", "type"],
-            },
-            "tags": {"type": "array", "items": {"type": "string"}},
-        },
-        "required": ["kind", "confidence", "tags"],
-    },
-}
-
-AnthropicCall = Callable[[str, str, dict], dict]
+# The DI callable's signature: (system_prompt, user_text) -> parsed_dict.
+# The real implementation wraps an OpenAI-SDK JSON-mode call; tests inject fakes.
+LLMCall = Callable[[str, str], dict]
 
 
 @dataclass(frozen=True)
@@ -81,10 +65,25 @@ _AMBIGUOUS = ClassifyResult(kind="ambiguous", confidence=0.0, suggested_task=Non
 
 def _build_system_prompt(today: date) -> str:
     return (
-        "You classify a single captured thought from a student. Use the "
-        "classify_thought tool to return structured output.\n"
-        f"Today is {today.isoformat()}. Resolve relative dates "
-        "('Friday', 'next week') to absolute ISO dates.\n"
+        "You classify a single captured thought from a student and respond with a "
+        "single JSON object (no prose, no markdown fences).\n"
+        f"Today is {today.isoformat()}. Resolve relative dates ('Friday', 'next week') "
+        "to absolute ISO dates (YYYY-MM-DD).\n"
+        "\n"
+        "Output schema (keys must match exactly):\n"
+        "{\n"
+        '  "kind": "task" | "thought" | "resurface" | "ambiguous",\n'
+        '  "confidence": <number in [0,1]>,\n'
+        '  "suggested_task": null | {\n'
+        '    "category": <one of the known categories>,\n'
+        '    "name": <short task name>,\n'
+        '    "due": <ISO YYYY-MM-DD or null>,\n'
+        '    "type": <one of the known task types>,\n'
+        '    "weight": <string like "35%" or null>\n'
+        "  },\n"
+        '  "tags": [<string>, ...]\n'
+        "}\n"
+        "\n"
         f"Known categories: {', '.join(CATEGORIES)}.\n"
         f"Known task types: {', '.join(TASK_TYPES)}.\n"
         "Kinds:\n"
@@ -92,32 +91,31 @@ def _build_system_prompt(today: date) -> str:
         "- 'thought': an idea, observation, or half-formed note with no action.\n"
         "- 'resurface': something to bring back later ('remind me', 'look into').\n"
         "- 'ambiguous': unclear — the user should pick manually.\n"
-        "Confidence is your self-estimate; use 0.75+ only when you are "
-        "clearly correct. For a task, if you cannot extract a due date, "
-        "set due to null."
+        "Confidence is your self-estimate; use 0.75+ only when you are clearly correct. "
+        "For a task, if you cannot extract a due date, set due to null. Set suggested_task "
+        "to null when kind is not 'task'."
     )
 
 
-def _default_call(api_key: str) -> AnthropicCall:
-    """Build a production caller that hits the real Anthropic API."""
-    from anthropic import Anthropic
+def _default_call(api_key: str) -> LLMCall:
+    """Build a production caller that hits the DeepSeek API via the OpenAI SDK."""
+    from openai import OpenAI
 
-    client = Anthropic(api_key=api_key)
+    client = OpenAI(api_key=api_key, base_url=_BASE_URL)
 
-    def _call(system: str, user: str, tool_schema: dict) -> dict:
-        resp = client.messages.create(
+    def _call(system: str, user: str) -> dict:
+        resp = client.chat.completions.create(
             model=_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            response_format={"type": "json_object"},
             max_tokens=512,
-            system=system,
-            tools=[tool_schema],
-            tool_choice={"type": "tool", "name": tool_schema["name"]},
-            messages=[{"role": "user", "content": user}],
+            temperature=0.2,
         )
-        # Find the tool_use block and return its input.
-        for block in resp.content:
-            if getattr(block, "type", None) == "tool_use":
-                return dict(block.input)
-        raise RuntimeError("no tool_use block in Anthropic response")
+        content = resp.choices[0].message.content or ""
+        return json.loads(content)
 
     return _call
 
@@ -126,21 +124,21 @@ def classify(
     text: str,
     today: date,
     *,
-    call: AnthropicCall | None = None,
+    call: LLMCall | None = None,
 ) -> ClassifyResult:
     if call is None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
-            log.info("ANTHROPIC_API_KEY unset; classifier disabled")
+            log.info("DEEPSEEK_API_KEY unset; classifier disabled")
             return _AMBIGUOUS
         try:
             call = _default_call(api_key)
         except Exception:
-            log.warning("failed to build Anthropic client", exc_info=True)
+            log.warning("failed to build DeepSeek client", exc_info=True)
             return _AMBIGUOUS
 
     try:
-        raw = call(_build_system_prompt(today), text, _TOOL_SCHEMA)
+        raw = call(_build_system_prompt(today), text)
     except Exception:
         log.warning("classifier call failed", exc_info=True)
         return _AMBIGUOUS
