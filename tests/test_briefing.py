@@ -88,3 +88,32 @@ def test_events_from_other_days_excluded():
 def test_no_events_argument_is_backward_compatible():
     text = generate_briefing([], today=date(2026, 4, 13))
     assert "TODAY'S SCHEDULE" not in text
+
+
+def test_resurfacing_block_surfaces_due_items(tmp_path):
+    import json
+    p = tmp_path / "resurface.jsonl"
+    p.write_text(
+        json.dumps({"text": "read econ paper", "trigger_date": "2026-04-13", "trigger_raw": None, "created_at": "x"}) + "\n"
+        + json.dumps({"text": "future thing", "trigger_date": "2026-05-01", "trigger_raw": None, "created_at": "x"}) + "\n"
+    )
+    text = generate_briefing([], today=date(2026, 4, 13), resurface_path=p)
+    assert "RESURFACING" in text
+    assert "read econ paper" in text
+    assert "future thing" not in text
+
+
+def test_resurfacing_block_absent_when_no_items(tmp_path):
+    p = tmp_path / "resurface.jsonl"
+    text = generate_briefing([], today=date(2026, 4, 13), resurface_path=p)
+    assert "RESURFACING" not in text
+
+
+def test_resurfacing_unparseable_trigger_never_surfaces(tmp_path):
+    import json
+    p = tmp_path / "resurface.jsonl"
+    p.write_text(
+        json.dumps({"text": "maybe revisit", "trigger_date": None, "trigger_raw": "sometime", "created_at": "x"}) + "\n"
+    )
+    text = generate_briefing([], today=date(2026, 4, 13), resurface_path=p)
+    assert "RESURFACING" not in text

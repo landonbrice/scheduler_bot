@@ -28,7 +28,7 @@ Personal academic scheduler for UChicago Spring 2026. Telegram Mini App + daily 
 - **Membase MCP is remote, reached via `mcp-remote` bridge.** Server lives at `https://mcp.membase.so/mcp`; `npx mcp-remote` translates stdio↔HTTPS. OAuth tokens in `~/.mcp-auth/` are shared with Claude Desktop — no separate auth setup. Requires `npx` on PATH at runtime.
 
 ## Tests
-`pytest -v` — 38 tests across `tests/test_{tasks_store,auth,briefing,server,memory}.py`. No React tests (pragmatic); verify UI manually in Telegram.
+`pytest -v` — 95 tests across `tests/test_{tasks_store,auth,briefing,server,memory,config,pending_queue,undo_buffer,classifier,capture,bot_capture}.py`. No React tests (pragmatic); verify UI manually in Telegram.
 
 ## Conventions
 - Python: `from __future__ import annotations` in all backend modules, frozen dataclasses for config, atomic writes via `tempfile.mkstemp + os.replace`.
@@ -40,11 +40,15 @@ Personal academic scheduler for UChicago Spring 2026. Telegram Mini App + daily 
 - ✅ Backend + Mini App + bot + cron live end-to-end.
 - ✅ Google Calendar integration live (`backend/gcal.py`, `/api/calendar`, briefing "TODAY'S SCHEDULE" block, Mini App schedule rail). Credentials at `~/.config/scheduler-bot/google_{creds,token}.json`. Fetches merge events across all visible calendars (not just primary). Fetch fails soft — returns `[]` on missing token.
 - ✅ Syllabi-derived tasks seeded via `scripts/seed_syllabi.py` (SCS III Canvas posts, APES weekly readings). `tasks.json` is the source of truth for the seeded set (37 tasks for Spring 2026).
-- ✅ Membase memory client live (`backend/memory.py`). Three fail-soft async fns: `store_memory(content, project=None) -> bool`, `search_memory(query, limit=10) -> list[dict]`, `search_wiki(query) -> list[dict]`. Single lazy `ClientSession` per host process. Errors are caught + logged — **callers never need try/except**. Not yet wired into bot commands.
-- ⏭️ Later: Claude-enhanced briefings (Anthropic API); extra bot commands (`/list`, `/done`, `/add`, `/undo`, `/week`, `/crunch`).
+- ✅ Membase memory client live (`backend/memory.py`). Three fail-soft async fns: `store_memory(content, project=None) -> bool`, `search_memory(query, limit=10) -> list[dict]`, `search_wiki(query) -> list[dict]`. Single lazy `ClientSession` per host process. Errors are caught + logged — **callers never need try/except**.
+- ✅ **R1 capture surface live** (LANDO OS v2). Bot commands: `/note <text>` (classifier picks task/thought/resurface; confidence ≥0.75 optimistically creates a task with 60s `undo` reply window; otherwise inline buttons), `/think <text>` (save + surface related), `/return <text> [| in N days | next monday | tomorrow]` (writes `data/resurface.jsonl`, briefing surfaces items whose trigger_date has arrived), `/recall <query>` (Membase semantic search), `/help`. Classifier uses `deepseek-chat` via `backend/classifier.py`; fails soft to inline buttons on any DeepSeek error. All markdown replies escape user-controlled fields via `telegram.helpers.escape_markdown` v1. Failed Membase writes queue to `data/membase_pending.jsonl` (gitignored). Requires `DEEPSEEK_API_KEY` in `.env`; without it the classifier is disabled and every `/note` falls through to the inline-button flow.
+- ⏭️ Later: R1.5 Mini App Notes tab (chronological Membase feed, "create task from this" action); R2 lightweight priority algorithm (urgency × impact × type boost); Claude-enhanced briefings; evening recap cron; `/api/suggest` for "what should I work on for 60 min?".
 
 ## Reference
-- Plan: `docs/superpowers/plans/2026-04-13-telegram-miniapp.md`
+- Vision: `LANDO_OS_V2_DIRECTIONS.md`
+- R1 spec: `docs/superpowers/specs/2026-04-16-lando-os-v2-r1-capture-design.md`
+- R1 plan: `docs/superpowers/plans/2026-04-16-lando-os-v2-r1-capture.md`
+- Mini App plan: `docs/superpowers/plans/2026-04-13-telegram-miniapp.md`
 - Memory spec: `docs/superpowers/specs/2026-04-16-membase-mcp-client-design.md`
 - Memory plan: `docs/superpowers/plans/2026-04-16-membase-mcp-client.md`
 - Original spec: `CLAUDE_CODE_DIRECTIONS.md`

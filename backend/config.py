@@ -16,6 +16,7 @@ class Settings:
     api_host: str
     api_port: int
     tasks_path: Path
+    deepseek_api_key: str
 
 
 def load_settings() -> Settings:
@@ -27,4 +28,5 @@ def load_settings() -> Settings:
         api_host=os.environ.get("API_HOST", "127.0.0.1"),
         api_port=int(os.environ.get("API_PORT", "8000")),
         tasks_path=Path(tasks_path),
+        deepseek_api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
     )

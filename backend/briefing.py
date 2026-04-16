@@ -1,6 +1,7 @@
 from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 from .tasks_store import Task
 
@@ -20,6 +21,7 @@ def generate_briefing(
     tasks: list[Task],
     today: date,
     events: list["CalendarEvent"] | None = None,
+    resurface_path: Path | None = None,
 ) -> str:
     active = [t for t in tasks if not t.done]
     # "This week" = through the upcoming Friday of the current work week.
@@ -100,6 +102,27 @@ def generate_briefing(
             kinds = ", ".join(f"{t.course} {t.type}" for t in ts)
             lines.append(f"  {_fmt(d)}: {kinds}")
         lines.append("")
+
+    # Resurface items from /return whose trigger_date <= today
+    if resurface_path is not None and resurface_path.exists():
+        import json
+        due_resurface: list[str] = []
+        for line in resurface_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            trig = entry.get("trigger_date")
+            if trig and trig <= today.isoformat():
+                due_resurface.append(entry.get("text", ""))
+        if due_resurface:
+            lines.append("🔁 *RESURFACING*")
+            for t in due_resurface:
+                lines.append(f"  · {t}")
+            lines.append("")
 
     lines.append(f"Active: {len(active)} tasks | This week: {len(week) + len(due_today)}")
     return "\n".join(lines)
