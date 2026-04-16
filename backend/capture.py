@@ -152,6 +152,121 @@ async def process_note(text: str, chat_id: int, message_id: int, deps: CaptureDe
     )
 
 
+MemorySearch = Callable[[str, int], Awaitable[list[dict]]]
+
+
+async def process_think(text: str, *, deps: CaptureDeps, memory_search: MemorySearch) -> CaptureOutcome:
+    text = text.strip()
+    if not text:
+        return CaptureOutcome(kind="usage")
+    await _store_or_queue(deps, f"[THINKING] {text}", None)
+    try:
+        hits = await memory_search(text, 3)
+    except Exception:
+        log.warning("memory_search failed on /think", exc_info=True)
+        hits = []
+    return CaptureOutcome(kind="thought_saved", recall_hits=hits)
+
+
+_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def _parse_return_trigger(raw: str, today: date) -> tuple[str | None, str | None]:
+    """Return (trigger_date_iso_or_None, trigger_raw_or_None).
+
+    If no `|` is present, default trigger = tomorrow.
+    `| in N days` → today + N.
+    `| next <weekday>` → next occurrence of that weekday strictly after today.
+    Anything else → (None, raw_trigger_string).
+    """
+    if "|" not in raw:
+        return (today + timedelta(days=1)).isoformat(), None
+
+    _, trigger = raw.split("|", 1)
+    trigger = trigger.strip().lower()
+
+    m = re.match(r"in\s+(\d+)\s+days?", trigger)
+    if m:
+        return (today + timedelta(days=int(m.group(1)))).isoformat(), None
+
+    m = re.match(r"next\s+(\w+)", trigger)
+    if m and m.group(1) in _WEEKDAYS:
+        target_idx = _WEEKDAYS.index(m.group(1))
+        today_idx = today.weekday()
+        delta = (target_idx - today_idx) % 7
+        if delta == 0:
+            delta = 7
+        return (today + timedelta(days=delta)).isoformat(), None
+
+    return None, trigger
+
+
+def _text_before_pipe(raw: str) -> str:
+    return raw.split("|", 1)[0].strip() if "|" in raw else raw.strip()
+
+
+async def process_return(raw: str, *, deps: CaptureDeps) -> CaptureOutcome:
+    raw = raw.strip()
+    if not raw:
+        return CaptureOutcome(kind="usage")
+    today = deps.today_fn()
+    trigger_date, trigger_raw = _parse_return_trigger(raw, today)
+    text = _text_before_pipe(raw)
+    annotation = f" (resurface on {trigger_date})" if trigger_date else " (no auto-trigger)"
+    await _store_or_queue(deps, f"[RETURN] {text}{annotation}", None)
+    write_resurface(deps, text=text, trigger_date=trigger_date, trigger_raw=trigger_raw)
+    return CaptureOutcome(kind="resurface_saved", trigger_date=trigger_date)
+
+
+async def process_recall(query: str, *, deps: CaptureDeps, memory_search: MemorySearch) -> CaptureOutcome:
+    query = query.strip()
+    if not query:
+        return CaptureOutcome(kind="usage")
+    try:
+        hits = await memory_search(query, 5)
+    except Exception:
+        log.warning("memory_search failed on /recall", exc_info=True)
+        hits = []
+    return CaptureOutcome(kind="recall_results", recall_hits=hits)
+
+
+async def confirm_create_task(
+    suggested: SuggestedTask | None,
+    *,
+    raw_text: str,
+    chat_id: int,
+    message_id: int,
+    deps: CaptureDeps,
+) -> CaptureOutcome:
+    """Invoked when the user taps [✅ Create task] on the inline keyboard.
+
+    If `suggested` is None (classifier produced no suggestion), build a minimal
+    task from the raw note text.
+    """
+    today = deps.today_fn()
+    if suggested is None:
+        suggested = SuggestedTask(
+            category="life",
+            name=raw_text[:80] or "captured note",
+            due=(today + timedelta(days=DEFAULT_TASK_DUE_OFFSET_DAYS)).isoformat(),
+            type="admin",
+            weight=None,
+        )
+    due = suggested.due or (today + timedelta(days=DEFAULT_TASK_DUE_OFFSET_DAYS)).isoformat()
+    defaulted = suggested.due is None
+
+    existing = {t.id for t in deps.tasks.list()}
+    task_id = _task_id_from(suggested.category, suggested.name, existing)
+    task = Task(
+        id=task_id, course=suggested.category, name=suggested.name,
+        due=due, type=suggested.type, weight=suggested.weight or "",
+        done=False, notes=None,
+    )
+    deps.tasks.add(task)
+    deps.undo.register(chat_id=chat_id, message_id=message_id, task_id=task_id)
+    return CaptureOutcome(kind="task_created", task=task, defaulted_due=defaulted)
+
+
 def write_resurface(deps: CaptureDeps, *, text: str, trigger_date: str | None, trigger_raw: str | None) -> None:
     """Append a structured resurface record to data/resurface.jsonl."""
     if deps.resurface_path is None:

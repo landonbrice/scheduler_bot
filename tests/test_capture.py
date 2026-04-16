@@ -7,6 +7,7 @@ from backend.classifier import ClassifyResult, SuggestedTask
 from backend.pending_queue import PendingQueue
 from backend.tasks_store import TasksStore
 from backend.undo_buffer import UndoBuffer
+from backend.capture import process_think, process_return, process_recall
 
 
 class FakeMemory:
@@ -146,3 +147,114 @@ async def test_empty_text_returns_usage(tmp_path):
     outcome = await process_note("", chat_id=1, message_id=10, deps=deps)
     assert outcome.kind == "usage"
     assert deps.tasks.list() == []
+
+
+class FakeMemoryWithSearch:
+    def __init__(self, search_results: list[dict] | None = None, store_ok: bool = True):
+        self.search_results = search_results or []
+        self.store_ok = store_ok
+        self.stored: list[tuple[str, str | None]] = []
+        self.searched: list[tuple[str, int]] = []
+
+    async def store(self, content: str, project: str | None) -> bool:
+        if not self.store_ok:
+            return False
+        self.stored.append((content, project))
+        return True
+
+    async def search(self, query: str, limit: int = 10) -> list[dict]:
+        self.searched.append((query, limit))
+        return self.search_results
+
+
+def _deps_with_search(tmp_path, mem: FakeMemoryWithSearch):
+    from backend.capture import CaptureDeps
+    from backend.pending_queue import PendingQueue
+    from backend.tasks_store import TasksStore
+    from backend.undo_buffer import UndoBuffer
+    return CaptureDeps(
+        tasks=TasksStore(tmp_path / "tasks.json"),
+        undo=UndoBuffer(ttl_seconds=60),
+        pending=PendingQueue(tmp_path / "pending.jsonl"),
+        memory_store=mem.store,
+        classifier=lambda *a, **kw: (_ for _ in ()).throw(AssertionError("no classifier for non-/note")),
+        today_fn=lambda: date(2026, 4, 16),
+        resurface_path=tmp_path / "resurface.jsonl",
+    ), mem
+
+
+@pytest.mark.asyncio
+async def test_think_stores_and_returns_related(tmp_path):
+    mem = FakeMemoryWithSearch(search_results=[{"text": "earlier thought about pricing"}])
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_think("pricing thoughts part 2", deps=deps, memory_search=mem.search)
+    assert outcome.kind == "thought_saved"
+    assert outcome.recall_hits == [{"text": "earlier thought about pricing"}]
+    assert any(c.startswith("[THINKING]") for c, _ in mem.stored)
+
+
+@pytest.mark.asyncio
+async def test_think_empty_returns_usage(tmp_path):
+    mem = FakeMemoryWithSearch()
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_think("", deps=deps, memory_search=mem.search)
+    assert outcome.kind == "usage"
+
+
+@pytest.mark.asyncio
+async def test_return_bare_uses_tomorrow(tmp_path):
+    mem = FakeMemoryWithSearch()
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_return("read that article", deps=deps)
+    assert outcome.kind == "resurface_saved"
+    assert outcome.trigger_date == "2026-04-17"
+    import json
+    lines = (tmp_path / "resurface.jsonl").read_text().strip().splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["text"] == "read that article"
+    assert entry["trigger_date"] == "2026-04-17"
+
+
+@pytest.mark.asyncio
+async def test_return_in_n_days(tmp_path):
+    mem = FakeMemoryWithSearch()
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_return("review plan | in 3 days", deps=deps)
+    assert outcome.trigger_date == "2026-04-19"
+
+
+@pytest.mark.asyncio
+async def test_return_next_weekday(tmp_path):
+    mem = FakeMemoryWithSearch()
+    deps, _ = _deps_with_search(tmp_path, mem)
+    # 2026-04-16 is a Thursday. 'next monday' → 2026-04-20.
+    outcome = await process_return("check pricing ideas | next monday", deps=deps)
+    assert outcome.trigger_date == "2026-04-20"
+
+
+@pytest.mark.asyncio
+async def test_return_unparseable_trigger(tmp_path):
+    mem = FakeMemoryWithSearch()
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_return("review later | sometime soonish", deps=deps)
+    assert outcome.kind == "resurface_saved"
+    assert outcome.trigger_date is None
+
+
+@pytest.mark.asyncio
+async def test_recall_returns_hits(tmp_path):
+    mem = FakeMemoryWithSearch(search_results=[{"text": "a"}, {"text": "b"}, {"text": "c"}])
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_recall("pricing", deps=deps, memory_search=mem.search)
+    assert outcome.kind == "recall_results"
+    assert len(outcome.recall_hits) == 3
+    assert mem.searched == [("pricing", 5)]
+
+
+@pytest.mark.asyncio
+async def test_recall_empty_query_returns_usage(tmp_path):
+    mem = FakeMemoryWithSearch()
+    deps, _ = _deps_with_search(tmp_path, mem)
+    outcome = await process_recall("", deps=deps, memory_search=mem.search)
+    assert outcome.kind == "usage"
