@@ -3,10 +3,10 @@
 Personal academic scheduler for UChicago Spring 2026. Telegram Mini App + daily 7am briefing, backend on Mac Mini exposed via Cloudflare Quick Tunnel.
 
 ## Architecture
-- **`backend/`** — FastAPI on `127.0.0.1:8000`; endpoints under `/api/*` require `X-Telegram-Init-Data` header (HMAC-verified via `backend/auth.py`). Serves Vite build at `/`.
+- **`backend/`** — FastAPI on `127.0.0.1:8000`; endpoints under `/api/*` require `X-Telegram-Init-Data` header (HMAC-verified via `backend/auth.py`). Serves Vite build at `/`. Core modules: `server.py` (HTTP), `bot.py` (Telegram), `tasks_store.py` (tasks.json CRUD), `briefing.py` (morning/cron text), `gcal.py` (Google Calendar), `memory.py` (Membase MCP client), `classifier.py` (DeepSeek JSON-mode classifier), `capture.py` (orchestrator: `process_note` / `_think` / `_return` / `_recall` / `confirm_create_task`), `pending_queue.py` (Membase retry JSONL), `undo_buffer.py` (60s TTL undo for /note task creations).
 - **`frontend/`** — React + Vite + Tailwind. `npm run build` outputs to `backend/static/`.
-- **Bot** — `backend/bot.py` modes: `bot` (polling) · `send` (cron) · `setup-menu` (re-point menu button).
-- **State** — `data/tasks.json` (gitignored). Seeded by `scripts/seed_tasks.py`.
+- **Bot** — `backend/bot.py` modes: `bot` (polling) · `send` (cron) · `setup-menu` (re-point menu button + refresh `/` slash-command hints). Handlers: `/start`, `/briefing`, `/note`, `/think`, `/return`, `/recall`, `/help`, callback queries (inline buttons on low-confidence `/note`), plain-text `undo` within 60 s.
+- **State** — `data/tasks.json` (source of truth for structured tasks). `data/resurface.jsonl` (append-only; `/return` items; briefing reads and filters by trigger_date). `data/membase_pending.jsonl` (retry queue for failed Membase writes; drains on next call). All gitignored. Seeded by `scripts/seed_tasks.py` + `scripts/seed_syllabi.py`.
 - **Tunnel** — `scripts/refresh_tunnel.sh` starts cloudflared, writes `MINIAPP_URL` to `.env`, re-runs `setup-menu`.
 
 ## Ops
@@ -26,6 +26,10 @@ Personal academic scheduler for UChicago Spring 2026. Telegram Mini App + daily 
 - **`tmux send-keys C-c` can kill a window** rather than restart the running process. To restart api/bot after code changes, close the old window (`tmux kill-window -t scheduler:<name>`) and `tmux new-window -t scheduler -n <name> "<cmd>"`.
 - **`from __future__ import annotations` + signature inspection:** `inspect.Parameter.annotation` is the raw string (`'str'`), not the type. Use `typing.get_type_hints(func)` when tests compare against real types.
 - **Membase MCP is remote, reached via `mcp-remote` bridge.** Server lives at `https://mcp.membase.so/mcp`; `npx mcp-remote` translates stdio↔HTTPS. OAuth tokens in `~/.mcp-auth/` are shared with Claude Desktop — no separate auth setup. Requires `npx` on PATH at runtime.
+- **Bot token leaks into INFO-level httpx logs.** `python-telegram-bot` puts the token in every URL path (`https://api.telegram.org/bot<TOKEN>/...`), and httpx logs each request at INFO. Token is in gitignored `.env` + `briefing.log`, but scrub before sharing logs / screenshots. Rotate via BotFather if it ever escapes.
+- **Classifier uses DeepSeek via the OpenAI SDK, not Anthropic.** `backend/classifier.py` hits `https://api.deepseek.com` with `model=deepseek-chat` and `response_format={"type": "json_object"}` (JSON mode). The schema is described in the system prompt — function-calling on DeepSeek's current models is less reliable than JSON mode. `DEEPSEEK_API_KEY` in `.env` is the gate; empty disables the classifier and every `/note` falls through to the inline-button flow (not broken — just degraded).
+- **Markdown escaping for Telegram replies.** User-controlled fields (task names, weights, tags, Membase snippets) are escaped via `telegram.helpers.escape_markdown(x, version=1)` before interpolation into a `parse_mode=MARKDOWN` message. Skipping this produces "Bad Request: can't parse entities" when a note contains `_`, `*`, `` ` ``, or `[`.
+- **Classifier DI pattern.** `classify(text, today, *, call=None)` takes an optional `call: Callable[[str, str], dict]` for tests. Tests inject a fake that returns a dict; production leaves `call=None` and the module builds the real OpenAI-SDK client. All 7 classifier tests run with zero network.
 
 ## Tests
 `pytest -v` — 95 tests across `tests/test_{tasks_store,auth,briefing,server,memory,config,pending_queue,undo_buffer,classifier,capture,bot_capture}.py`. No React tests (pragmatic); verify UI manually in Telegram.
@@ -35,6 +39,8 @@ Personal academic scheduler for UChicago Spring 2026. Telegram Mini App + daily 
 - TS: strict mode, `noUnusedLocals`. Global `Window.Telegram` typed in `frontend/src/telegram.ts`.
 - Dates: backend uses real `date.today()`; frontend uses real `new Date()`. (JSX mockup hardcoded 2026-04-13 — do not propagate.)
 - **Mutating tasks.json**: no PATCH API. Use `TasksStore(path).replace_all(tasks)` after in-place edits, or write an idempotent seed script in `scripts/` that guards on `existing = {t.id for t in store.list()}`. Recurring items (Canvas posts, weekly readings) are materialized upfront as discrete tasks, not generated by a rule engine.
+- **Capture flow invariants**: every `/note`, `/think`, `/return` writes raw text to Membase BEFORE classifying or creating any task ("never lose a thought"). Failed Membase writes queue to `data/membase_pending.jsonl`. `/note` auto-creates a task only when classifier confidence ≥ 0.75 AND a due date is extractable or defaulted — otherwise inline buttons ask the user to pick. Task creations register a 60 s undo entry keyed on (chat_id, message_id).
+- **Bot capture handlers are DI-wired, not module-imported.** `backend/bot.py` stashes a `CaptureDeps` bundle (real `store_memory`, real `classify`, real stores) in `app.bot_data["deps"]` inside `_build_app`. Handlers read deps off `context.bot_data`. Tests build a fake `CaptureDeps` with in-memory stores and a stub classifier — no need to patch `backend.memory` or `backend.classifier` in tests.
 
 ## Status (as of 2026-04-16)
 - ✅ Backend + Mini App + bot + cron live end-to-end.
@@ -45,6 +51,7 @@ Personal academic scheduler for UChicago Spring 2026. Telegram Mini App + daily 
 - ⏭️ Later: R1.5 Mini App Notes tab (chronological Membase feed, "create task from this" action); R2 lightweight priority algorithm (urgency × impact × type boost); Claude-enhanced briefings; evening recap cron; `/api/suggest` for "what should I work on for 60 min?".
 
 ## Reference
+- Repo: https://github.com/landonbrice/scheduler_bot (`main` is deploy branch)
 - Vision: `LANDO_OS_V2_DIRECTIONS.md`
 - R1 spec: `docs/superpowers/specs/2026-04-16-lando-os-v2-r1-capture-design.md`
 - R1 plan: `docs/superpowers/plans/2026-04-16-lando-os-v2-r1-capture.md`
