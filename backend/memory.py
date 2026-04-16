@@ -57,6 +57,7 @@ async def _get_session() -> Any:
         return _SESSION
 
     async with _LOCK:
+        # Re-check under lock: another task may have initialized or disabled while we waited.
         if _SESSION is not None:
             return _SESSION
         if _DISABLED:
@@ -128,7 +129,10 @@ async def store_memory(content: str, project: str | None = None) -> bool:
         if project is not None:
             args["project"] = project
         result = await session.call_tool("add_memory", args)
-        return not bool(getattr(result, "isError", False))
+        if bool(getattr(result, "isError", False)):
+            log.warning("Membase add_memory returned isError=True")
+            return False
+        return True
     except Exception:
         log.warning("Membase add_memory call failed", exc_info=True)
         return False
