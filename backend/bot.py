@@ -12,6 +12,7 @@ from datetime import date
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, Update, WebAppInfo
 from telegram.constants import ParseMode
+from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application, CommandHandler, ContextTypes,
     CallbackQueryHandler, MessageHandler, filters,
@@ -36,6 +37,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("bot")
 
 
+def _esc(s: str) -> str:
+    return escape_markdown(s, version=1)
+
+
 def _build_capture_deps(settings) -> CaptureDeps:
     data_dir = Path(settings.tasks_path).parent
     return CaptureDeps(
@@ -56,9 +61,9 @@ HELP_TEXT = (
     "/think <text> — save as thought, surface related\n"
     "/return <text> [| in N days | next monday] — resurface later\n"
     "/recall <query> — search your captured notes\n"
-    "/add <course> | <name> | <YYYY-MM-DD> — structured task\n"
-    "/done <id>, /undo <id> — mark / unmark task\n"
-    "/help — this message"
+    "/help — this message\n"
+    "\n"
+    "_Mini App only: /add, /done, /undo — tap Dashboard below._"
 )
 
 
@@ -115,10 +120,10 @@ def _confirmation_markup(pending_id: str) -> InlineKeyboardMarkup:
 
 def _format_task_reply(outcome: CaptureOutcome) -> str:
     t = outcome.task
-    parts = [f"✅ Task created: `{t.id}` — {t.name}", f"due {t.due}"]
+    parts = [f"✅ Task created: `{t.id}` — {_esc(t.name)}", f"due {_esc(t.due)}"]
     if t.weight:
-        parts.append(t.weight)
-    parts.append(f"type {t.type}")
+        parts.append(_esc(t.weight))
+    parts.append(f"type {_esc(t.type)}")
     flag = " ⚠️ no due date found; defaulted" if outcome.defaulted_due else ""
     return ". ".join(parts) + "." + flag + '\nReply "undo" within 60s to revert.'
 
@@ -126,11 +131,11 @@ def _format_task_reply(outcome: CaptureOutcome) -> str:
 def _format_thought_reply(outcome: CaptureOutcome) -> str:
     lines = ["💭 Saved."]
     if outcome.tags:
-        lines[0] += f" Tagged: [{', '.join(outcome.tags)}]"
+        lines[0] += f" Tagged: [{', '.join(_esc(tag) for tag in outcome.tags)}]"
     for hit in outcome.recall_hits[:3]:
         snippet = (hit.get("text") or hit.get("content") or "").strip()[:120]
         if snippet:
-            lines.append(f"  · {snippet}")
+            lines.append(f"  · {_esc(snippet)}")
     if outcome.membase_queued:
         lines.append("  (Membase unavailable — queued locally.)")
     return "\n".join(lines)
@@ -149,7 +154,7 @@ def _format_recall_reply(outcome: CaptureOutcome) -> str:
     for hit in outcome.recall_hits:
         snippet = (hit.get("text") or hit.get("content") or "").strip()[:140]
         if snippet:
-            lines.append(f"  · {snippet}")
+            lines.append(f"  · {_esc(snippet)}")
     return "\n".join(lines)
 
 
@@ -157,8 +162,11 @@ def _format_needs_confirmation(outcome: CaptureOutcome, raw_text: str) -> str:
     suggested = outcome.suggested_task
     head = "I think this is a task, but I'm not sure. Pick one:"
     if suggested:
-        return f"{head}\n→ would create: `{suggested.category}` · {suggested.name} · due {suggested.due or '(default +7d)'} · type {suggested.type}"
-    return f"{head}\n→ raw: {raw_text[:120]}"
+        return (
+            f"{head}\n→ would create: `{_esc(suggested.category)}` · {_esc(suggested.name)}"
+            f" · due {_esc(suggested.due or '(default +7d)')} · type {_esc(suggested.type)}"
+        )
+    return f"{head}\n→ raw: {_esc(raw_text[:120])}"
 
 
 async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -155,5 +155,35 @@ async def test_cmd_help_lists_all_new_commands(tmp_path):
     msg = _FakeMessage(text="/help", chat_id=1, message_id=10)
     await cmd_help(_FakeUpdate(message=msg), ctx)
     reply = msg.replies[0][0]
-    for cmd in ["/note", "/think", "/return", "/recall", "/briefing", "/done", "/add"]:
+    for cmd in ["/note", "/think", "/return", "/recall", "/briefing", "/help"]:
         assert cmd in reply
+
+
+@pytest.mark.asyncio
+async def test_cmd_note_markdown_chars_in_task_name_are_escaped(tmp_path):
+    """Real user notes contain _, *, [ — Telegram Markdown must not blow up."""
+    def cls(text, today, **_):
+        return ClassifyResult(
+            kind="task", confidence=0.9,
+            suggested_task=SuggestedTask("projects", "refactor call_site[x]", "2026-04-24", "admin", "5%"),
+            tags=["projects"],
+        )
+    ctx, _ = _build_context_with_deps(tmp_path, cls)
+    ctx.args = ["refactor", "call_site[x]"]
+    msg = _FakeMessage(text="/note refactor call_site[x]", chat_id=1, message_id=10)
+    await cmd_note(_FakeUpdate(message=msg), ctx)
+    reply = msg.replies[0][0]
+    # Escaped form uses backslashes before _ and [ (version=1 escapes _ and [ but not ])
+    assert "call\\_site\\[x" in reply
+
+
+@pytest.mark.asyncio
+async def test_cmd_help_does_not_claim_add_done_undo_exist_as_bot_commands(tmp_path):
+    ctx, _ = _build_context_with_deps(tmp_path, lambda *a, **kw: None)
+    msg = _FakeMessage(text="/help", chat_id=1, message_id=10)
+    await cmd_help(_FakeUpdate(message=msg), ctx)
+    reply = msg.replies[0][0]
+    # These are Mini App–only operations, not bot commands. Help should not
+    # present them as bot commands (would mislead users who try /done and
+    # get silent "unknown command").
+    assert "/done" not in reply.split("Mini App")[0]  # should not appear before the Mini App note
