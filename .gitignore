@@ -12,3 +12,4 @@ frontend/dist/
 briefing.log
 .tunnel_url
 frontend/tsconfig.tsbuildinfo
+.worktrees/
