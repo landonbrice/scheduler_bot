@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Awaitable, Callable, Literal
 
-from .classifier import ClassifyResult, SuggestedTask, classify as real_classify
+from .classifier import ClassifyResult, SuggestedTask
 from .pending_queue import PendingQueue
 from .tasks_store import Task, TasksStore
 from .undo_buffer import UndoBuffer
@@ -93,15 +93,12 @@ async def process_note(text: str, chat_id: int, message_id: int, deps: CaptureDe
 
     today = deps.today_fn()
 
-    # Step 1: always write raw note to Membase (or queue it).
-    project = None  # we fill this in below after classification; queue entry is re-written if classification refines it
-    queued = await _store_or_queue(deps, f"[NOTE] {text}", project)
-
-    # Step 2: classify.
+    # Step 1: classify (fail-soft — returns _AMBIGUOUS on any error).
     result: ClassifyResult = deps.classifier(text, today)
 
-    if result.tags:
-        project = _pick_project(result.tags)
+    # Step 2: pick project label from tags, then write raw note to Membase (or queue it).
+    project = _pick_project(result.tags) if result.tags else None
+    queued = await _store_or_queue(deps, f"[NOTE] {text}", project)
 
     # Step 3: branch.
     if result.kind == "thought":

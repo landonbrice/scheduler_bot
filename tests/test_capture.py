@@ -21,7 +21,7 @@ class FakeMemory:
         return True
 
 
-def _deps(tmp_path: Path, classifier, memory_succeeds: bool = True) -> CaptureDeps:
+def _deps(tmp_path: Path, classifier, memory_succeeds: bool = True) -> tuple[CaptureDeps, FakeMemory]:
     store = TasksStore(tmp_path / "tasks.json")
     queue = PendingQueue(tmp_path / "pending.jsonl")
     buf = UndoBuffer(ttl_seconds=60)
@@ -52,6 +52,8 @@ async def test_high_confidence_task_writes_immediately(tmp_path):
     assert any(t.name == "Pset 4" for t in deps.tasks.list())
     # Membase write happened
     assert mem.stored and mem.stored[0][0].startswith("[NOTE]")
+    # Membase write uses the project derived from classifier tags
+    assert mem.stored[0][1] == "corpfin"
     # Undo entry registered
     entry = deps.undo.pop_latest(chat_id=1)
     assert entry is not None and entry.task_id == outcome.task.id
@@ -93,6 +95,8 @@ async def test_thought_just_saves(tmp_path):
     assert outcome.kind == "thought_saved"
     assert outcome.tags == ["projects"]
     assert deps.tasks.list() == []
+    # Membase write uses the project derived from classifier tags
+    assert mem.stored[0][1] == "projects"
 
 
 @pytest.mark.asyncio
