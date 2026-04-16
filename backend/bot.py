@@ -78,7 +78,8 @@ async def _send_briefing(app: Application, chat_id: str, miniapp_url: str) -> No
     store = TasksStore(settings.tasks_path)
     from .gcal import fetch_events
     events = fetch_events(date.today(), days=1)
-    text = generate_briefing(store.list(), today=date.today(), events=events)
+    resurface_path = Path(settings.tasks_path).parent / "resurface.jsonl"
+    text = generate_briefing(store.list(), today=date.today(), events=events, resurface_path=resurface_path)
     await app.bot.send_message(
         chat_id=chat_id,
         text=text,
@@ -100,7 +101,8 @@ async def cmd_briefing(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     store = TasksStore(settings.tasks_path)
     from .gcal import fetch_events
     events = fetch_events(date.today(), days=1)
-    text = generate_briefing(store.list(), today=date.today(), events=events)
+    resurface_path = Path(settings.tasks_path).parent / "resurface.jsonl"
+    text = generate_briefing(store.list(), today=date.today(), events=events, resurface_path=resurface_path)
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
