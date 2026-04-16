@@ -11,3 +11,4 @@ frontend/dist/
 .DS_Store
 briefing.log
 .tunnel_url
+frontend/tsconfig.tsbuildinfo
