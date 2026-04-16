@@ -323,10 +323,20 @@ async def run_setup_menu() -> None:
         sys.exit(2)
     app = _build_app(settings.telegram_bot_token)
     async with app:
+        # Keep the menu-button pointing at the Mini App.
         await app.bot.set_chat_menu_button(
             menu_button=MenuButtonWebApp(text="Dashboard", web_app=WebAppInfo(url=settings.miniapp_url)),
         )
-    log.info("Menu button set → %s", settings.miniapp_url)
+        # Populate the '/' hint popup.
+        await app.bot.set_my_commands([
+            BotCommand("briefing", "Today's schedule + due items"),
+            BotCommand("note", "Capture a thought (I'll classify)"),
+            BotCommand("think", "Save a thought, surface related"),
+            BotCommand("return", "Resurface later (| in N days | next monday)"),
+            BotCommand("recall", "Search your captured notes"),
+            BotCommand("help", "Show this command list"),
+        ])
+    log.info("Menu button + slash hints refreshed (miniapp=%s)", settings.miniapp_url)
 
 
 async def run_send() -> None:
