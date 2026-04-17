@@ -102,3 +102,121 @@ def test_calendar_endpoint_returns_events_list(client, monkeypatch):
 def test_calendar_endpoint_requires_auth(client):
     r = client.get("/api/calendar")
     assert r.status_code == 401
+
+
+def test_tasks_endpoint_includes_priority_score_and_tier(client):
+    resp = client.get("/api/tasks", headers={"X-Telegram-Init-Data": _init_data()})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tasks"], "need at least one seeded task for this assertion"
+    for t in body["tasks"]:
+        assert "priority_score" in t
+        assert "tier" in t
+        assert t["tier"] in ("red", "amber", "neutral")
+        assert 0.0 <= t["priority_score"] <= 300.0
+
+
+def test_schedule_endpoint_requires_auth(client):
+    resp = client.get("/api/schedule")
+    assert resp.status_code == 401
+
+
+def test_schedule_endpoint_returns_week(client):
+    resp = client.get(
+        "/api/schedule?start=2026-04-13",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["week_start"] == "2026-04-13"
+    assert isinstance(body["instances"], list)
+
+
+def test_schedule_endpoint_normalizes_start_to_monday(client):
+    # Wed 2026-04-15 → Monday 2026-04-13
+    resp = client.get(
+        "/api/schedule?start=2026-04-15",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["week_start"] == "2026-04-13"
+
+
+def test_surfaced_requires_auth(client):
+    resp = client.get("/api/notes/surfaced?start=2026-04-13")
+    assert resp.status_code == 401
+
+
+def test_search_requires_auth(client):
+    resp = client.get("/api/notes/search?q=hi")
+    assert resp.status_code == 401
+
+
+def test_dismiss_requires_auth(client):
+    resp = client.post("/api/capture/note/dismiss", json={"memory_id": "m1"})
+    assert resp.status_code == 401
+
+
+def test_dismiss_appends_entry(client, tmp_path, monkeypatch):
+    from backend import server as srv
+    p = tmp_path / "dismissed.jsonl"
+    monkeypatch.setattr(srv, "_dismissed_path", p)
+    resp = client.post(
+        "/api/capture/note/dismiss",
+        json={"memory_id": "m42"},
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert resp.status_code == 200
+    assert p.exists()
+    assert "m42" in p.read_text()
+
+
+def test_suggest_requires_auth(client):
+    resp = client.get("/api/suggest?duration=60&start_iso=2026-04-17T10:00:00-05:00")
+    assert resp.status_code == 401
+
+
+def test_settings_get_requires_auth(client):
+    assert client.get("/api/settings").status_code == 401
+
+
+def test_settings_put_requires_auth(client):
+    assert client.put(
+        "/api/settings",
+        json={"included_calendar_ids": [], "show_priority_score": False},
+    ).status_code == 401
+
+
+def test_settings_round_trip(client, tmp_path, monkeypatch):
+    from backend import server as srv
+    p = tmp_path / "settings.json"
+    monkeypatch.setattr(srv, "_settings_path", p)
+    body = {"included_calendar_ids": ["primary", "c2"], "show_priority_score": True}
+    assert client.put(
+        "/api/settings",
+        json=body,
+        headers={"X-Telegram-Init-Data": _init_data()},
+    ).status_code == 200
+    got = client.get(
+        "/api/settings",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    ).json()
+    assert got["settings"]["included_calendar_ids"] == ["primary", "c2"]
+    assert got["settings"]["show_priority_score"] is True
+
+
+def test_suggest_ratelimit_falls_back(client, monkeypatch):
+    from backend import server as srv
+    from backend.suggest import RateLimiter
+    monkeypatch.setattr(srv, "_suggest_rl", RateLimiter(capacity=1, refill_per_minute=1))
+    r1 = client.get(
+        "/api/suggest?duration=60&start_iso=2026-04-17T10:00:00-05:00",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert r1.status_code == 200
+    r2 = client.get(
+        "/api/suggest?duration=60&start_iso=2026-04-17T10:00:00-05:00",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert r2.status_code == 200
+    assert r2.json().get("rate_limited") is True or r2.json().get("source") == "fallback"

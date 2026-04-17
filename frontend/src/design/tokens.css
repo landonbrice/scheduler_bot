@@ -1,0 +1,124 @@
+/* ============================================================
+   LANDO OS v2 — R2 Week View Design Tokens
+   ------------------------------------------------------------
+   Visual system: refined editorial academic.
+   Paper-white base, deep ink text, 8 grounded category hues,
+   3 tiers differentiated by weight (fill / border / ghost).
+   No gradients. 12px canonical radius. Mobile-first.
+   ============================================================ */
+
+:root {
+  /* -------- Surface & ink (neutral ground) -------- */
+  --surface-paper:   #FAF8F3;  /* app background — warm off-white */
+  --surface-card:    #FFFFFF;  /* day-column background */
+  --surface-sunken:  #F1EEE6;  /* overdue drawer, filter rail */
+  --ink-primary:     #1C1B1A;  /* deep near-black ink */
+  --ink-secondary:   #5A564F;  /* meta, weekday labels */
+  --ink-tertiary:    #8C877D;  /* timestamps, chip glyphs */
+  --ink-hairline:    #E7E2D5;  /* the only "grid line" — faint */
+
+  /* -------- Category canonical colors (8) --------
+     Each category gets ONE hue used for:
+       - FixedBlockPill solid fill
+       - TaskPill left-border accent
+       - ThoughtChip border tint (muted via alpha)
+       - Filter chip active state
+       - Category badge
+     Hues chosen to be distinguishable at 12-14px and
+     accessible against white (AA for body text pairings). */
+  --cat-corpfin:    #1F4E6B;  /* deep academic blue — finance */
+  --cat-scsiii:     #6B1F3A;  /* crimson wine — social sciences */
+  --cat-apes:       #3B6B2A;  /* forest green — environmental */
+  --cat-e4e:        #C2571B;  /* burnt orange — entrepreneurship */
+  --cat-baseball:   #8B4513;  /* saddle leather — baseball */
+  --cat-recruiting: #4A3A7C;  /* muted indigo — recruiting */
+  --cat-projects:   #0F6B6B;  /* teal — side projects */
+  --cat-life:       #7A6B3A;  /* olive ochre — life/personal */
+
+  /* -------- Category "soft" variants --------
+     Used for TaskPill fill (a whisper of the category), and
+     ThoughtChip tinted border. Always layered over white. */
+  --cat-corpfin-soft:    #EAF0F5;
+  --cat-scsiii-soft:     #F5E9ED;
+  --cat-apes-soft:       #ECF2E8;
+  --cat-e4e-soft:        #FBEBDD;
+  --cat-baseball-soft:   #F3E8DC;
+  --cat-recruiting-soft: #EDE9F3;
+  --cat-projects-soft:   #E3EFEF;
+  --cat-life-soft:       #F2EFE4;
+
+  /* -------- Tier colors (urgency-semantic, category-agnostic) --------
+     --tier-red      urgent/overdue border + drawer accent
+     --tier-amber    due-today soft warning
+     --tier-neutral  default bordered-task accent when no urgency  */
+  --tier-red:     #B3261E;   /* overdue / urgent */
+  --tier-amber:   #B87A14;   /* due today / soon */
+  --tier-neutral: #3A3834;   /* calm accent */
+
+  /* Soft backgrounds for urgent surfaces (drawer header, badge bg) */
+  --tier-red-soft:   #F8E6E4;
+  --tier-amber-soft: #F6ECD9;
+
+  /* -------- Radius scale -------- */
+  --radius-chip: 10px;   /* ThoughtChip (smaller) */
+  --radius-pill: 12px;   /* CANONICAL — FixedBlockPill, TaskPill */
+  --radius-card: 14px;   /* DayColumn container, Drawer */
+  --radius-fab:  999px;  /* CaptureFAB */
+
+  /* -------- Spacing (mobile-first, airy) -------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;   /* pill vertical padding */
+  --space-4: 16px;   /* pill horizontal padding, column gutter */
+  --space-5: 20px;
+  --space-6: 24px;   /* day-column vertical breathing */
+  --space-7: 32px;
+
+  /* -------- Typography ramp -------- */
+  --font-display: "Fraunces", "Cormorant Garamond", Georgia, serif;
+  --font-body:    "Inter Tight", "IBM Plex Sans", -apple-system, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+
+  --text-chip:   12px;   /* ThoughtChip label */
+  --text-pill:   14px;   /* TaskPill / FixedBlockPill primary */
+  --text-meta:   11px;   /* timestamps, category badges */
+  --text-day:    13px;   /* weekday label */
+  --text-date:   28px;   /* DayColumn date numeral (display serif) */
+
+  /* -------- Elevation (restrained; NO glowy drop-shadows) -------- */
+  --shadow-pill:  0 1px 0 rgba(28, 27, 26, 0.04);
+  --shadow-card:  0 1px 2px rgba(28, 27, 26, 0.06);
+  --shadow-fab:   0 6px 16px rgba(28, 27, 26, 0.18);
+  --shadow-focus: 0 0 0 2px var(--surface-paper), 0 0 0 4px var(--ink-primary);
+
+  /* -------- Motion -------- */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast:   120ms;
+  --dur-med:    200ms;
+  --dur-slow:   320ms;
+}
+
+/* ============================================================
+   Utility class hooks (optional — consumers can inline too)
+   ------------------------------------------------------------
+   These are plain CSS classes, not Tailwind. React components
+   in Task 8 may use these OR derive their own via Tailwind
+   arbitrary values like bg-[color:var(--cat-corpfin)].
+   ============================================================ */
+
+.wv-pill {
+  border-radius: var(--radius-pill);
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-body);
+  font-size: var(--text-pill);
+  line-height: 1.25;
+  box-shadow: var(--shadow-pill);
+}
+
+.wv-chip {
+  border-radius: var(--radius-chip);
+  padding: 6px 10px;
+  font-family: var(--font-body);
+  font-size: var(--text-chip);
+  line-height: 1.2;
+}

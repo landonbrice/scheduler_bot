@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, Update, WebAppInfo
 from telegram.constants import ParseMode
@@ -22,8 +22,9 @@ from pathlib import Path
 
 from .briefing import generate_briefing
 from .capture import (
-    CaptureDeps, CaptureOutcome,
-    process_note, process_think, process_return, process_recall,
+    CaptureDeps, CaptureOutcome, CaptureResult,
+    DEFAULT_RESURFACE_OFFSET_DAYS, DEFAULT_TASK_DUE_OFFSET_DAYS,
+    process_note, process_note_v2, process_think, process_return, process_recall,
     confirm_create_task, write_resurface,
 )
 from .classifier import classify as default_classify, SuggestedTask
@@ -171,36 +172,113 @@ def _format_needs_confirmation(outcome: CaptureOutcome, raw_text: str) -> str:
     return f"{head}\n→ raw: {_esc(raw_text[:120])}"
 
 
+def _format_needs_confirmation_v2(result: CaptureResult, suggested: SuggestedTask | None) -> str:
+    head = "I think this is a task, but I'm not sure. Pick one:"
+    if suggested:
+        return (
+            f"{head}\n→ would create: `{_esc(suggested.category)}` · {_esc(suggested.name)}"
+            f" · due {_esc(suggested.due or '(default +7d)')} · type {_esc(suggested.type)}"
+        )
+    return f"{head}\n→ raw: {_esc(result.raw_text[:120])}"
+
+
+def _format_task_reply_v2(result: CaptureResult, deps: CaptureDeps) -> str:
+    """Render the 'task created' Telegram reply from a CaptureResult.
+
+    Looks up the Task via created_task_id for fields not carried on
+    CaptureResult (name, type, weight). Byte-parallel with the legacy
+    _format_task_reply.
+    """
+    task = next((t for t in deps.tasks.list() if t.id == result.created_task_id), None)
+    if task is None:
+        # Defensive fallback — shouldn't happen in practice.
+        return f"✅ Task created: `{_esc(result.created_task_id or '')}`."
+    parts = [f"✅ Task created: `{task.id}` — {_esc(task.name)}", f"due {_esc(task.due)}"]
+    if task.weight:
+        parts.append(_esc(task.weight))
+    parts.append(f"type {_esc(task.type)}")
+    flag = " ⚠️ no due date found; defaulted" if result.defaulted_due else ""
+    return ". ".join(parts) + "." + flag + '\nReply "undo" within 60s to revert.'
+
+
+def _format_thought_reply_v2(result: CaptureResult) -> str:
+    head = "💭 Saved."
+    if result.tags:
+        head += f" Tagged: [{', '.join(_esc(tag) for tag in result.tags)}]"
+    lines = [head]
+    if not result.memory_stored:
+        lines.append("  (Membase unavailable — queued locally.)")
+    return "\n".join(lines)
+
+
+def _format_resurface_reply_v2(deps: CaptureDeps) -> str:
+    """Byte-parallel with _format_resurface_reply. process_note_v2 always uses
+    the default trigger (today + DEFAULT_RESURFACE_OFFSET_DAYS)."""
+    trigger = (deps.today_fn() + timedelta(days=DEFAULT_RESURFACE_OFFSET_DAYS)).isoformat()
+    return f"🔁 Will resurface on {trigger}."
+
+
+def _format_capture_result(result: CaptureResult, deps: CaptureDeps) -> str:
+    """Renderer dispatch for CaptureResult → Telegram text (non-ambiguous).
+
+    Ambiguous is handled by the caller with inline buttons and must not
+    reach this dispatcher; unknown classifications are a programmer error.
+    """
+    if result.classification == "task":
+        return _format_task_reply_v2(result, deps)
+    if result.classification == "thought":
+        return _format_thought_reply_v2(result)
+    if result.classification == "resurface":
+        return _format_resurface_reply_v2(deps)
+    raise ValueError(f"unexpected classification: {result.classification!r}")
+
+
 async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     deps: CaptureDeps = context.bot_data["deps"]
     msg = update.message
     text = " ".join(context.args) if context.args else ""
-    outcome = await process_note(text, chat_id=msg.chat_id, message_id=msg.message_id, deps=deps)
 
-    if outcome.kind == "usage":
+    if not text.strip():
         await msg.reply_text("Give me something to capture. Usage: /note <text>")
         return
-    if outcome.kind == "task_created":
-        await msg.reply_text(_format_task_reply(outcome), parse_mode=ParseMode.MARKDOWN)
-        return
-    if outcome.kind == "thought_saved":
-        await msg.reply_text(_format_thought_reply(outcome))
-        return
-    if outcome.kind == "resurface_saved":
-        await msg.reply_text(_format_resurface_reply(outcome))
-        return
-    if outcome.kind == "needs_confirmation":
-        # Stash the suggested task + raw text under a short pending_id keyed on chat/msg.
-        pending_id = f"{msg.chat_id}-{msg.message_id}"
-        context.bot_data.setdefault("pending", {})[pending_id] = {
-            "raw_text": text,
-            "suggested_task": outcome.suggested_task,
-        }
+
+    result = await process_note_v2(
+        text, chat_id=msg.chat_id, message_id=msg.message_id, deps=deps,
+    )
+
+    if result.classification == "task":
         await msg.reply_text(
-            _format_needs_confirmation(outcome, text),
-            reply_markup=_confirmation_markup(pending_id),
+            _format_capture_result(result, deps),
+            parse_mode=ParseMode.MARKDOWN,
         )
         return
+    if result.classification in ("thought", "resurface"):
+        await msg.reply_text(_format_capture_result(result, deps))
+        return
+    # ambiguous
+    pending_id = f"{msg.chat_id}-{msg.message_id}"
+    # CaptureResult carries the original SuggestedTask on a private field so
+    # we don't re-invoke the classifier (DeepSeek roundtrip). If the classifier
+    # produced no SuggestedTask AND the orchestrator gave us a category, build
+    # a minimal placeholder the user can still confirm/edit.
+    suggested_task = result._suggested_task
+    if suggested_task is None and result.suggested_category is not None:
+        today = deps.today_fn()
+        suggested_task = SuggestedTask(
+            category=result.suggested_category,
+            name=(text.strip()[:80] or "captured note"),
+            due=(today + timedelta(days=DEFAULT_TASK_DUE_OFFSET_DAYS)).isoformat(),
+            type="admin",
+            weight=None,
+        )
+    context.bot_data.setdefault("pending", {})[pending_id] = {
+        "raw_text": text,
+        "suggested_task": suggested_task,
+    }
+    await msg.reply_text(
+        _format_needs_confirmation_v2(result, suggested_task),
+        reply_markup=_confirmation_markup(pending_id),
+    )
 
 
 async def cmd_think(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

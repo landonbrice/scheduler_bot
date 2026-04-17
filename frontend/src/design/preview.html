@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>LANDO OS v2 — R2 Week View Visual System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+/* --- Tokens inlined so this file runs standalone (mirrors tokens.css) --- */
+:root {
+  --surface-paper:#FAF8F3; --surface-card:#FFFFFF; --surface-sunken:#F1EEE6;
+  --ink-primary:#1C1B1A; --ink-secondary:#5A564F; --ink-tertiary:#8C877D;
+  --ink-hairline:#E7E2D5;
+
+  --cat-corpfin:#1F4E6B; --cat-scsiii:#6B1F3A; --cat-apes:#3B6B2A;
+  --cat-e4e:#C2571B; --cat-baseball:#8B4513; --cat-recruiting:#4A3A7C;
+  --cat-projects:#0F6B6B; --cat-life:#7A6B3A;
+
+  --cat-corpfin-soft:#EAF0F5; --cat-scsiii-soft:#F5E9ED; --cat-apes-soft:#ECF2E8;
+  --cat-e4e-soft:#FBEBDD; --cat-baseball-soft:#F3E8DC; --cat-recruiting-soft:#EDE9F3;
+  --cat-projects-soft:#E3EFEF; --cat-life-soft:#F2EFE4;
+
+  --tier-red:#B3261E; --tier-amber:#B87A14; --tier-neutral:#3A3834;
+  --tier-red-soft:#F8E6E4; --tier-amber-soft:#F6ECD9;
+
+  --radius-chip:10px; --radius-pill:12px; --radius-card:14px; --radius-fab:999px;
+
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:20px; --space-6:24px; --space-7:32px;
+
+  --font-display:"Fraunces", Georgia, serif;
+  --font-body:"Inter Tight", -apple-system, sans-serif;
+  --font-mono:"JetBrains Mono", ui-monospace, monospace;
+
+  --shadow-pill:0 1px 0 rgba(28,27,26,.04);
+  --shadow-card:0 1px 2px rgba(28,27,26,.06);
+  --shadow-fab:0 6px 16px rgba(28,27,26,.18);
+  --shadow-focus:0 0 0 2px var(--surface-paper), 0 0 0 4px var(--ink-primary);
+
+  --ease:cubic-bezier(.2,0,0,1);
+  --dur-fast:120ms; --dur-med:200ms; --dur-slow:320ms;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--surface-paper);
+  color:var(--ink-primary);
+  font-family:var(--font-body);
+  font-size:14px;
+  line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:120px;
+}
+
+/* Subtle paper texture: 1px grain via radial gradients, no opacity haze */
+body::before{
+  content:"";
+  position:fixed; inset:0; pointer-events:none; z-index:0;
+  background-image:
+    radial-gradient(rgba(28,27,26,.015) 1px, transparent 1px);
+  background-size:3px 3px;
+}
+
+/* ============================================================
+   PREVIEW PAGE CHROME (not part of the product — just docs)
+   ============================================================ */
+.doc{
+  position:relative; z-index:1;
+  max-width:1180px; margin:0 auto; padding:48px 24px 0;
+}
+.doc-hdr{
+  display:flex; align-items:baseline; justify-content:space-between;
+  gap:24px; flex-wrap:wrap;
+  padding-bottom:24px;
+  border-bottom:1px solid var(--ink-hairline);
+}
+.doc-hdr h1{
+  font-family:var(--font-display);
+  font-weight:500; font-style:italic;
+  font-size:44px; letter-spacing:-0.01em;
+  margin:0;
+}
+.doc-hdr .sub{
+  font-family:var(--font-mono);
+  font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--ink-tertiary);
+}
+.section{ margin:56px 0 }
+.section h2{
+  font-family:var(--font-display); font-weight:500;
+  font-size:22px; letter-spacing:-0.005em;
+  margin:0 0 4px; color:var(--ink-primary);
+}
+.section .section-meta{
+  font-family:var(--font-mono); font-size:11px;
+  letter-spacing:.08em; text-transform:uppercase;
+  color:var(--ink-tertiary);
+  margin-bottom:20px;
+}
+
+/* ============================================================
+   TOKEN SWATCHES
+   ============================================================ */
+.swatch-grid{
+  display:grid; gap:12px;
+  grid-template-columns:repeat(auto-fill, minmax(220px,1fr));
+}
+.swatch{
+  background:var(--surface-card);
+  border:1px solid var(--ink-hairline);
+  border-radius:var(--radius-card);
+  padding:14px;
+  display:flex; gap:12px; align-items:center;
+}
+.swatch .chip{
+  width:36px; height:36px;
+  border-radius:var(--radius-chip);
+  flex-shrink:0;
+  box-shadow:inset 0 0 0 1px rgba(28,27,26,.08);
+}
+.swatch .meta{ display:flex; flex-direction:column; gap:2px; min-width:0 }
+.swatch .name{ font-weight:600; font-size:13px }
+.swatch .var{
+  font-family:var(--font-mono); font-size:11px;
+  color:var(--ink-tertiary);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+
+/* ============================================================
+   WEEK VIEW
+   ============================================================ */
+.weekview{
+  position:relative;
+  background:var(--surface-paper);
+  border-radius:var(--radius-card);
+  overflow:hidden;
+}
+
+.week-hdr{
+  display:flex; align-items:baseline; justify-content:space-between;
+  padding:8px 4px 20px;
+}
+.week-hdr .title{
+  font-family:var(--font-display);
+  font-size:20px; font-weight:500; font-style:italic;
+  letter-spacing:-0.005em;
+}
+.week-hdr .range{
+  font-family:var(--font-mono);
+  font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--ink-tertiary);
+}
+
+/* Filter chip rail (shows category coordination) */
+.filter-rail{
+  display:flex; gap:8px; overflow-x:auto; padding:2px 2px 14px;
+  scrollbar-width:none;
+}
+.filter-rail::-webkit-scrollbar{display:none}
+.filter-chip{
+  flex:0 0 auto;
+  display:inline-flex; align-items:center; gap:6px;
+  padding:6px 12px;
+  border-radius:var(--radius-chip);
+  background:var(--surface-card);
+  border:1px solid var(--ink-hairline);
+  font-size:12px; font-weight:500;
+  color:var(--ink-secondary);
+  cursor:pointer;
+  transition:background var(--dur-fast) var(--ease),
+             border-color var(--dur-fast) var(--ease);
+}
+.filter-chip .dot{
+  width:8px; height:8px; border-radius:999px;
+  background:var(--tier-neutral);
+}
+.filter-chip[data-active="true"]{
+  background:var(--ink-primary); color:var(--surface-paper); border-color:var(--ink-primary);
+}
+.filter-chip:hover{ background:var(--surface-sunken) }
+.filter-chip[data-active="true"]:hover{ background:#000 }
+
+/* Horizontal-scrolling day columns (mobile-first). Desktop gets a grid. */
+.days{
+  display:grid; gap:16px;
+  grid-template-columns:repeat(7, minmax(220px, 1fr));
+  overflow-x:auto; scroll-snap-type:x mandatory;
+  padding:4px 2px 12px;
+  scrollbar-width:thin;
+}
+@media (max-width: 820px){
+  .days{ grid-template-columns:repeat(7, 78vw) }
+}
+
+/* DAY COLUMN — a breathing card, no hard grid lines */
+.day{
+  scroll-snap-align:start;
+  background:var(--surface-card);
+  border-radius:var(--radius-card);
+  padding:var(--space-5) var(--space-4) var(--space-6);
+  min-height:520px;
+  display:flex; flex-direction:column; gap:10px;
+  box-shadow:var(--shadow-card);
+  position:relative;
+}
+.day[data-today="true"]::after{
+  content:""; position:absolute; left:16px; right:16px; top:0; height:2px;
+  background:var(--ink-primary);
+  border-radius:0 0 2px 2px;
+}
+.day-hdr{
+  display:flex; align-items:baseline; justify-content:space-between;
+  padding-bottom:12px; margin-bottom:2px;
+  border-bottom:1px dashed var(--ink-hairline);
+}
+.day-hdr .weekday{
+  font-family:var(--font-mono);
+  font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--ink-secondary);
+}
+.day-hdr .date{
+  font-family:var(--font-display);
+  font-size:28px; font-weight:500; letter-spacing:-0.015em;
+  line-height:1;
+  color:var(--ink-primary);
+}
+.day[data-today="true"] .date{ color:var(--ink-primary) }
+.day[data-today="true"] .weekday{ color:var(--ink-primary); font-weight:700 }
+
+/* Time-of-day labels (soft, low-hierarchy) */
+.tod{
+  font-family:var(--font-mono);
+  font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--ink-tertiary);
+  margin-top:10px;
+}
+.tod:first-of-type{ margin-top:0 }
+
+/* ============================================================
+   TIER 1 — FixedBlockPill (solid, category-colored)
+   ============================================================ */
+.fb-pill{
+  display:flex; flex-direction:column; gap:2px;
+  padding:var(--space-3) var(--space-4);
+  border-radius:var(--radius-pill);
+  color:#fff;
+  box-shadow:var(--shadow-pill);
+  cursor:pointer;
+  transition:transform var(--dur-fast) var(--ease),
+             box-shadow var(--dur-fast) var(--ease);
+}
+.fb-pill:hover{ transform:translateY(-1px); box-shadow:0 2px 6px rgba(28,27,26,.12) }
+.fb-pill:active{ transform:translateY(0) }
+.fb-pill .label{ font-size:14px; font-weight:600; letter-spacing:-0.005em }
+.fb-pill .meta{
+  font-family:var(--font-mono); font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; opacity:.82;
+}
+
+.fb-corpfin   { background:var(--cat-corpfin) }
+.fb-scsiii    { background:var(--cat-scsiii) }
+.fb-apes      { background:var(--cat-apes) }
+.fb-e4e       { background:var(--cat-e4e) }
+.fb-baseball  { background:var(--cat-baseball) }
+.fb-recruiting{ background:var(--cat-recruiting) }
+.fb-projects  { background:var(--cat-projects) }
+.fb-life      { background:var(--cat-life) }
+
+/* ============================================================
+   TIER 2 — TaskPill (bordered, left-accent, neutral fill)
+   ============================================================ */
+.task-pill{
+  position:relative;
+  display:flex; align-items:flex-start; gap:10px;
+  padding:var(--space-3) var(--space-4) var(--space-3) 18px;
+  background:var(--surface-card);
+  border:1px solid var(--ink-hairline);
+  border-left:4px solid var(--tier-neutral);
+  border-radius:var(--radius-pill);
+  color:var(--ink-primary);
+  cursor:pointer;
+  transition:background var(--dur-fast) var(--ease),
+             transform var(--dur-fast) var(--ease),
+             border-color var(--dur-fast) var(--ease);
+}
+.task-pill:hover{ background:#FDFBF6; transform:translateX(1px) }
+.task-pill:active{ transform:translateX(0) }
+
+.task-pill .check{
+  width:16px; height:16px; border-radius:5px;
+  border:1.5px solid var(--ink-tertiary);
+  flex-shrink:0; margin-top:2px;
+  transition:border-color var(--dur-fast) var(--ease);
+}
+.task-pill:hover .check{ border-color:var(--ink-primary) }
+
+.task-pill .body{ display:flex; flex-direction:column; gap:3px; min-width:0 }
+.task-pill .label{ font-size:14px; font-weight:500; line-height:1.25 }
+.task-pill .meta{
+  display:flex; gap:8px; align-items:center;
+  font-family:var(--font-mono);
+  font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--ink-tertiary);
+}
+.task-pill .cat-badge{
+  padding:2px 6px; border-radius:4px;
+  background:var(--surface-sunken); color:var(--ink-secondary);
+  font-weight:600;
+}
+
+/* Left-accent variants (category-coordinated, NOT filled) */
+.tp-corpfin   { border-left-color:var(--cat-corpfin) }
+.tp-scsiii    { border-left-color:var(--cat-scsiii) }
+.tp-apes      { border-left-color:var(--cat-apes) }
+.tp-e4e       { border-left-color:var(--cat-e4e) }
+.tp-baseball  { border-left-color:var(--cat-baseball) }
+.tp-recruiting{ border-left-color:var(--cat-recruiting) }
+.tp-projects  { border-left-color:var(--cat-projects) }
+.tp-life      { border-left-color:var(--cat-life) }
+
+/* Urgent = full red border (not just left accent) */
+.task-pill[data-urgent="true"]{
+  border:1.5px solid var(--tier-red);
+  background:var(--tier-red-soft);
+}
+.task-pill[data-urgent="true"] .label{ color:var(--tier-red); font-weight:600 }
+.task-pill[data-urgent="true"] .cat-badge{
+  background:#fff; color:var(--tier-red);
+}
+
+/* Due-today = amber left accent overrides category */
+.task-pill[data-due="today"]{ border-left-color:var(--tier-amber) }
+
+/* Expanded state (tap to reveal notes/actions) */
+.task-pill[data-expanded="true"]{
+  background:var(--surface-sunken);
+}
+.task-pill[data-expanded="true"] .expando{
+  display:flex; gap:8px; padding-top:8px;
+}
+.task-pill .expando{ display:none; font-size:12px; color:var(--ink-secondary) }
+.task-pill .expando button{
+  font-family:var(--font-body); font-size:11px; font-weight:500;
+  padding:4px 10px; border-radius:6px;
+  border:1px solid var(--ink-hairline); background:var(--surface-card);
+  color:var(--ink-primary); cursor:pointer;
+}
+.task-pill .expando button:hover{ background:var(--ink-primary); color:#fff }
+
+/* ============================================================
+   TIER 3 — ThoughtChip (ghost border, muted, icon-prefixed)
+   ============================================================ */
+.thought-chip{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:6px 10px;
+  border-radius:var(--radius-chip);
+  background:transparent;
+  border:1px dashed var(--ink-hairline);
+  color:var(--ink-secondary);
+  font-size:12px;
+  cursor:pointer;
+  transition:all var(--dur-fast) var(--ease);
+  max-width:100%;
+}
+.thought-chip:hover{
+  background:var(--surface-card);
+  border-style:solid;
+  color:var(--ink-primary);
+}
+.thought-chip .icon{
+  width:12px; height:12px; flex-shrink:0;
+  color:var(--ink-tertiary);
+}
+.thought-chip .text{
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  max-width:180px;
+}
+
+/* Expanded thought chip (tap to reveal full text + promote button) */
+.thought-chip[data-expanded="true"]{
+  display:flex; width:100%;
+  flex-direction:column; align-items:stretch; gap:8px;
+  background:var(--surface-card);
+  border-style:solid;
+  padding:10px 12px;
+}
+.thought-chip[data-expanded="true"] .text{
+  white-space:normal; max-width:none; line-height:1.4;
+}
+.thought-chip[data-expanded="true"] .actions{
+  display:flex; gap:6px; font-family:var(--font-mono);
+  font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+}
+.thought-chip[data-expanded="true"] .actions button{
+  border:none; background:transparent;
+  color:var(--ink-primary); cursor:pointer; padding:0;
+  text-decoration:underline; text-underline-offset:3px;
+}
+.thought-chip[data-expanded="true"] .actions button.promote{
+  color:var(--cat-projects);
+}
+
+/* Category tinted borders for thoughts (subtle — uses soft variant) */
+.tc-corpfin   { border-color:var(--cat-corpfin); border-style:dotted }
+.tc-scsiii    { border-color:var(--cat-scsiii); border-style:dotted }
+.tc-apes      { border-color:var(--cat-apes); border-style:dotted }
+.tc-projects  { border-color:var(--cat-projects); border-style:dotted }
+
+/* ============================================================
+   CAPTURE FAB
+   ============================================================ */
+.fab-wrap{
+  position:fixed; right:20px; bottom:24px; z-index:20;
+  display:flex; flex-direction:column; align-items:flex-end; gap:10px;
+}
+.fab{
+  width:56px; height:56px;
+  border-radius:var(--radius-fab);
+  background:var(--ink-primary); color:var(--surface-paper);
+  border:none; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:var(--shadow-fab);
+  transition:transform var(--dur-med) var(--ease),
+             background var(--dur-fast) var(--ease);
+  font-family:var(--font-display);
+  font-size:28px; font-weight:500; line-height:1;
+}
+.fab:hover{ background:#000; transform:scale(1.04) }
+.fab:active{ transform:scale(0.98) }
+.fab:focus-visible{ outline:none; box-shadow:var(--shadow-focus), var(--shadow-fab) }
+.fab-hint{
+  font-family:var(--font-mono);
+  font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--ink-tertiary); padding-right:6px;
+}
+
+/* ============================================================
+   OVERDUE DRAWER (bottom sheet, pull-up)
+   ============================================================ */
+.drawer{
+  position:sticky; bottom:0;
+  background:var(--surface-sunken);
+  border-top:1px solid var(--tier-red);
+  border-radius:var(--radius-card) var(--radius-card) 0 0;
+  padding:16px 20px 20px;
+  margin-top:24px;
+  box-shadow:0 -4px 16px rgba(28,27,26,.06);
+}
+.drawer-hdr{
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:12px;
+}
+.drawer-hdr .label{
+  display:inline-flex; align-items:center; gap:8px;
+  font-family:var(--font-display); font-style:italic;
+  font-size:18px; font-weight:500;
+  color:var(--tier-red);
+}
+.drawer-hdr .count{
+  font-family:var(--font-mono); font-size:11px;
+  letter-spacing:.08em; text-transform:uppercase;
+  background:var(--tier-red); color:#fff;
+  padding:3px 8px; border-radius:6px;
+}
+.drawer-body{ display:flex; flex-direction:column; gap:8px }
+.drawer-handle{
+  width:36px; height:4px; background:var(--ink-hairline);
+  border-radius:999px; margin:0 auto 14px;
+}
+
+/* ============================================================
+   DOC SECTION: Interaction notes table
+   ============================================================ */
+.notes-table{
+  width:100%; border-collapse:collapse;
+  background:var(--surface-card);
+  border-radius:var(--radius-card); overflow:hidden;
+  box-shadow:var(--shadow-card);
+}
+.notes-table th, .notes-table td{
+  text-align:left; padding:12px 16px;
+  border-bottom:1px solid var(--ink-hairline);
+  font-size:13px; vertical-align:top;
+}
+.notes-table th{
+  background:var(--surface-sunken);
+  font-family:var(--font-mono); font-size:10px;
+  letter-spacing:.1em; text-transform:uppercase;
+  color:var(--ink-secondary); font-weight:600;
+}
+.notes-table tr:last-child td{ border-bottom:none }
+.notes-table code{
+  font-family:var(--font-mono); font-size:11px;
+  background:var(--surface-sunken); padding:2px 6px; border-radius:4px;
+  color:var(--ink-primary);
+}
+
+/* Page-load stagger */
+.day{ opacity:0; transform:translateY(8px); animation:rise var(--dur-slow) var(--ease) forwards }
+.day:nth-child(1){ animation-delay:0ms }
+.day:nth-child(2){ animation-delay:40ms }
+.day:nth-child(3){ animation-delay:80ms }
+.day:nth-child(4){ animation-delay:120ms }
+.day:nth-child(5){ animation-delay:160ms }
+.day:nth-child(6){ animation-delay:200ms }
+.day:nth-child(7){ animation-delay:240ms }
+@keyframes rise{ to { opacity:1; transform:translateY(0) } }
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{ animation:none !important; transition:none !important }
+}
+</style>
+</head>
+<body>
+
+<div class="doc">
+
+  <header class="doc-hdr">
+    <div>
+      <h1>Week View &mdash; <em>visual system</em></h1>
+      <div class="sub" style="margin-top:6px">LANDO OS v2 &middot; R2 &middot; design source of truth</div>
+    </div>
+    <div class="sub">spring 2026 &middot; 8 categories &middot; 3 tiers</div>
+  </header>
+
+  <!-- ================= TOKENS ================= -->
+  <section class="section">
+    <h2>Category tokens</h2>
+    <div class="section-meta">one canonical hue per bucket &middot; used across pills, borders, chips, badges</div>
+    <div class="swatch-grid">
+      <div class="swatch"><div class="chip" style="background:var(--cat-corpfin)"></div><div class="meta"><div class="name">CorpFin</div><div class="var">--cat-corpfin &middot; #1F4E6B</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--cat-scsiii)"></div><div class="meta"><div class="name">SCS III</div><div class="var">--cat-scsiii &middot; #6B1F3A</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--cat-apes)"></div><div class="meta"><div class="name">APES</div><div class="var">--cat-apes &middot; #3B6B2A</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--cat-e4e)"></div><div class="meta"><div class="name">E4E</div><div class="var">--cat-e4e &middot; #C2571B</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--cat-baseball)"></div><div class="meta"><div class="name">Baseball</div><div class="var">--cat-baseball &middot; #8B4513</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--cat-recruiting)"></div><div class="meta"><div class="name">Recruiting</div><div class="var">--cat-recruiting &middot; #4A3A7C</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--cat-projects)"></div><div class="meta"><div class="name">Projects</div><div class="var">--cat-projects &middot; #0F6B6B</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--cat-life)"></div><div class="meta"><div class="name">Life</div><div class="var">--cat-life &middot; #7A6B3A</div></div></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>Tier tokens</h2>
+    <div class="section-meta">urgency-semantic &middot; category-agnostic</div>
+    <div class="swatch-grid">
+      <div class="swatch"><div class="chip" style="background:var(--tier-red)"></div><div class="meta"><div class="name">Urgent / Overdue</div><div class="var">--tier-red &middot; #B3261E</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--tier-amber)"></div><div class="meta"><div class="name">Due today / Soon</div><div class="var">--tier-amber &middot; #B87A14</div></div></div>
+      <div class="swatch"><div class="chip" style="background:var(--tier-neutral)"></div><div class="meta"><div class="name">Default accent</div><div class="var">--tier-neutral &middot; #3A3834</div></div></div>
+    </div>
+  </section>
+
+  <!-- ================= WEEK VIEW MOCKUP ================= -->
+  <section class="section">
+    <h2>WeekView &mdash; composed mockup</h2>
+    <div class="section-meta">April 13 &ndash; 19, 2026 &middot; horizontal scroll on mobile, 7-col grid on desktop</div>
+
+    <div class="weekview">
+
+      <div class="week-hdr">
+        <div class="title">Week of <em>April 13</em></div>
+        <div class="range">wk 16 &middot; spring qtr</div>
+      </div>
+
+      <div class="filter-rail" aria-label="Category filters">
+        <button class="filter-chip" data-active="true"><span class="dot" style="background:var(--ink-primary)"></span>All</button>
+        <button class="filter-chip"><span class="dot" style="background:var(--cat-corpfin)"></span>CorpFin</button>
+        <button class="filter-chip"><span class="dot" style="background:var(--cat-scsiii)"></span>SCS III</button>
+        <button class="filter-chip"><span class="dot" style="background:var(--cat-apes)"></span>APES</button>
+        <button class="filter-chip"><span class="dot" style="background:var(--cat-e4e)"></span>E4E</button>
+        <button class="filter-chip"><span class="dot" style="background:var(--cat-baseball)"></span>Baseball</button>
+        <button class="filter-chip"><span class="dot" style="background:var(--cat-recruiting)"></span>Recruiting</button>
+        <button class="filter-chip"><span class="dot" style="background:var(--cat-projects)"></span>Projects</button>
+        <button class="filter-chip"><span class="dot" style="background:var(--cat-life)"></span>Life</button>
+      </div>
+
+      <div class="days">
+
+        <!-- ============ MON (today) ============ -->
+        <div class="day" data-today="true">
+          <div class="day-hdr">
+            <div><div class="weekday">Mon</div><div class="date">13</div></div>
+          </div>
+
+          <div class="tod">morning</div>
+          <div class="fb-pill fb-corpfin">
+            <div class="label">CorpFin 303</div>
+            <div class="meta">09:30 &middot; Saieh 021</div>
+          </div>
+          <div class="fb-pill fb-scsiii">
+            <div class="label">SCS III Lecture</div>
+            <div class="meta">11:00 &middot; Harper 145</div>
+          </div>
+
+          <div class="tod">afternoon</div>
+          <div class="task-pill tp-corpfin" data-urgent="true">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">PS5 due &mdash; WACC + DCF sensitivity</div>
+              <div class="meta"><span class="cat-badge">CorpFin</span><span>due 23:59</span></div>
+            </div>
+          </div>
+          <div class="task-pill tp-apes" data-due="today">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">APES weekly reading &mdash; Ch. 12 externalities</div>
+              <div class="meta"><span class="cat-badge">APES</span><span>due today</span></div>
+            </div>
+          </div>
+          <div class="fb-pill fb-baseball">
+            <div class="label">Practice</div>
+            <div class="meta">15:30 &middot; Stagg</div>
+          </div>
+
+          <div class="tod">evening / surfaced</div>
+          <div class="thought-chip tc-projects">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
+            <span class="text">&ldquo;Resurface: the priority algo idea &mdash; urgency &times; impact&rdquo;</span>
+          </div>
+          <div class="thought-chip tc-corpfin">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            <span class="text">&ldquo;Check if prof posted solutions to ps4&rdquo;</span>
+          </div>
+        </div>
+
+        <!-- ============ TUE ============ -->
+        <div class="day">
+          <div class="day-hdr">
+            <div><div class="weekday">Tue</div><div class="date">14</div></div>
+          </div>
+
+          <div class="tod">morning</div>
+          <div class="fb-pill fb-e4e">
+            <div class="label">E4E seminar</div>
+            <div class="meta">10:30 &middot; Polsky</div>
+          </div>
+
+          <div class="tod">afternoon</div>
+          <div class="task-pill tp-scsiii">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">Draft response essay &mdash; Weber &amp; Durkheim</div>
+              <div class="meta"><span class="cat-badge">SCS III</span><span>due fri</span></div>
+            </div>
+          </div>
+          <div class="task-pill tp-recruiting">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">Prep for Jane Street behavioral</div>
+              <div class="meta"><span class="cat-badge">Recruiting</span><span>thu 17:00</span></div>
+            </div>
+          </div>
+          <div class="fb-pill fb-recruiting">
+            <div class="label">Coffee chat &mdash; S. Park (ER analyst)</div>
+            <div class="meta">16:00 &middot; Plein Air</div>
+          </div>
+        </div>
+
+        <!-- ============ WED ============ -->
+        <div class="day">
+          <div class="day-hdr">
+            <div><div class="weekday">Wed</div><div class="date">15</div></div>
+          </div>
+
+          <div class="tod">morning</div>
+          <div class="fb-pill fb-corpfin">
+            <div class="label">CorpFin 303</div>
+            <div class="meta">09:30 &middot; Saieh 021</div>
+          </div>
+          <div class="fb-pill fb-apes">
+            <div class="label">APES lab</div>
+            <div class="meta">13:00 &middot; Hinds 164</div>
+          </div>
+
+          <div class="tod">afternoon</div>
+          <div class="task-pill tp-projects">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">Scheduler bot &mdash; wire R2 week view</div>
+              <div class="meta"><span class="cat-badge">Projects</span><span>self</span></div>
+            </div>
+          </div>
+          <div class="task-pill tp-e4e" data-expanded="true">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">E4E: pick project team &mdash; 3 options drafted</div>
+              <div class="meta"><span class="cat-badge">E4E</span><span>due sun</span></div>
+              <div class="expando">
+                <button>Open note</button>
+                <button>+ 1 day</button>
+                <button>Reassign</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ THU ============ -->
+        <div class="day">
+          <div class="day-hdr">
+            <div><div class="weekday">Thu</div><div class="date">16</div></div>
+          </div>
+          <div class="tod">morning</div>
+          <div class="fb-pill fb-scsiii">
+            <div class="label">SCS III Lecture</div>
+            <div class="meta">11:00 &middot; Harper 145</div>
+          </div>
+          <div class="tod">afternoon</div>
+          <div class="fb-pill fb-recruiting">
+            <div class="label">Jane Street behavioral</div>
+            <div class="meta">17:00 &middot; Zoom</div>
+          </div>
+          <div class="task-pill tp-life">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">Refill Rx &mdash; 30-day supply</div>
+              <div class="meta"><span class="cat-badge">Life</span><span>sometime</span></div>
+            </div>
+          </div>
+          <div class="thought-chip tc-apes">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l4 6h6l-5 4 2 8-7-4-7 4 2-8-5-4h6z"/></svg>
+            <span class="text">&ldquo;Ask about carbon-tax double dividend&rdquo;</span>
+          </div>
+        </div>
+
+        <!-- ============ FRI ============ -->
+        <div class="day">
+          <div class="day-hdr">
+            <div><div class="weekday">Fri</div><div class="date">17</div></div>
+          </div>
+          <div class="tod">morning</div>
+          <div class="fb-pill fb-corpfin">
+            <div class="label">CorpFin 303 &mdash; midterm</div>
+            <div class="meta">09:30 &middot; Saieh 021</div>
+          </div>
+          <div class="tod">afternoon</div>
+          <div class="task-pill tp-scsiii" data-urgent="true">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">SCS III essay due &mdash; 1500 words</div>
+              <div class="meta"><span class="cat-badge">SCS III</span><span>due 17:00</span></div>
+            </div>
+          </div>
+          <div class="fb-pill fb-baseball">
+            <div class="label">Away vs. Northwestern</div>
+            <div class="meta">18:00 &middot; Evanston</div>
+          </div>
+        </div>
+
+        <!-- ============ SAT ============ -->
+        <div class="day">
+          <div class="day-hdr">
+            <div><div class="weekday">Sat</div><div class="date">18</div></div>
+          </div>
+          <div class="tod">day</div>
+          <div class="fb-pill fb-baseball">
+            <div class="label">Doubleheader vs. Michigan</div>
+            <div class="meta">12:00 &middot; Stagg</div>
+          </div>
+          <div class="task-pill tp-life">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">Laundry + groceries</div>
+              <div class="meta"><span class="cat-badge">Life</span><span>flexible</span></div>
+            </div>
+          </div>
+          <div class="thought-chip" data-expanded="true">
+            <div class="text">&ldquo;Idea: build a Mini App &lsquo;Saturday focus&rsquo; mode that hides all recruiting + class tasks so I can actually rest. Surface only Life + Baseball. Maybe a toggle in Settings.&rdquo;</div>
+            <div class="actions">
+              <button class="promote">promote to task</button>
+              <button>open in Notes</button>
+              <button>dismiss</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ SUN ============ -->
+        <div class="day">
+          <div class="day-hdr">
+            <div><div class="weekday">Sun</div><div class="date">19</div></div>
+          </div>
+          <div class="tod">day</div>
+          <div class="task-pill tp-e4e">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">E4E team pick &mdash; final</div>
+              <div class="meta"><span class="cat-badge">E4E</span><span>due 23:59</span></div>
+            </div>
+          </div>
+          <div class="task-pill tp-corpfin">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">Review CorpFin midterm &amp; tag weak topics</div>
+              <div class="meta"><span class="cat-badge">CorpFin</span><span>flexible</span></div>
+            </div>
+          </div>
+          <div class="thought-chip tc-projects">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            <span class="text">&ldquo;Weekly retro: what worked, what slipped&rdquo;</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ============ OVERDUE DRAWER ============ -->
+      <div class="drawer" role="region" aria-label="Overdue tasks">
+        <div class="drawer-handle"></div>
+        <div class="drawer-hdr">
+          <div class="label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+            Overdue
+          </div>
+          <div class="count">3</div>
+        </div>
+        <div class="drawer-body">
+          <div class="task-pill tp-recruiting" data-urgent="true">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">Send thank-you note &mdash; M. Chen</div>
+              <div class="meta"><span class="cat-badge">Recruiting</span><span>2 days late</span></div>
+            </div>
+          </div>
+          <div class="task-pill tp-apes" data-urgent="true">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">APES reading &mdash; Ch. 11</div>
+              <div class="meta"><span class="cat-badge">APES</span><span>4 days late</span></div>
+            </div>
+          </div>
+          <div class="task-pill tp-life" data-urgent="true">
+            <div class="check"></div>
+            <div class="body">
+              <div class="label">Mom&rsquo;s bday card</div>
+              <div class="meta"><span class="cat-badge">Life</span><span>1 day late</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= COMPONENT ISOLATION ================= -->
+  <section class="section">
+    <h2>Components &mdash; isolated</h2>
+    <div class="section-meta">reference for Task 8 React builds</div>
+
+    <div style="display:grid; gap:20px; grid-template-columns:repeat(auto-fit, minmax(300px,1fr))">
+
+      <div>
+        <div class="section-meta" style="margin-bottom:8px">FixedBlockPill &mdash; tier 1</div>
+        <div style="display:flex; flex-direction:column; gap:8px">
+          <div class="fb-pill fb-corpfin"><div class="label">CorpFin 303</div><div class="meta">09:30 &middot; Saieh 021</div></div>
+          <div class="fb-pill fb-scsiii"><div class="label">SCS III Lecture</div><div class="meta">11:00 &middot; Harper 145</div></div>
+          <div class="fb-pill fb-baseball"><div class="label">Practice</div><div class="meta">15:30 &middot; Stagg</div></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-meta" style="margin-bottom:8px">TaskPill &mdash; tier 2</div>
+        <div style="display:flex; flex-direction:column; gap:8px">
+          <div class="task-pill tp-corpfin">
+            <div class="check"></div>
+            <div class="body"><div class="label">Normal task</div><div class="meta"><span class="cat-badge">CorpFin</span><span>fri</span></div></div>
+          </div>
+          <div class="task-pill tp-scsiii" data-due="today">
+            <div class="check"></div>
+            <div class="body"><div class="label">Due today (amber)</div><div class="meta"><span class="cat-badge">SCS III</span><span>due today</span></div></div>
+          </div>
+          <div class="task-pill tp-apes" data-urgent="true">
+            <div class="check"></div>
+            <div class="body"><div class="label">Urgent (red)</div><div class="meta"><span class="cat-badge">APES</span><span>overdue</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-meta" style="margin-bottom:8px">ThoughtChip &mdash; tier 3</div>
+        <div style="display:flex; flex-direction:column; gap:8px; align-items:flex-start">
+          <div class="thought-chip">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            <span class="text">&ldquo;short thought&rdquo;</span>
+          </div>
+          <div class="thought-chip tc-projects">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+            <span class="text">&ldquo;category-tinted chip&rdquo;</span>
+          </div>
+          <div class="thought-chip" data-expanded="true" style="min-width:260px">
+            <div class="text">&ldquo;Expanded: the chip opens in place, full text wraps, action row appears underneath.&rdquo;</div>
+            <div class="actions">
+              <button class="promote">promote</button>
+              <button>open</button>
+              <button>dismiss</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= INTERACTION NOTES ================= -->
+  <section class="section">
+    <h2>Spacing, radius &amp; interaction</h2>
+    <div class="section-meta">the rules that keep it coherent</div>
+    <table class="notes-table">
+      <thead>
+        <tr><th style="width:22%">Component</th><th style="width:20%">Radius</th><th style="width:24%">Padding</th><th>Interaction</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>DayColumn</strong></td>
+          <td><code>14px</code> (card)</td>
+          <td>20px 16px 24px</td>
+          <td>No grid lines. Today has a 2px ink bar at top. 1px dashed divider under the date.</td>
+        </tr>
+        <tr>
+          <td><strong>FixedBlockPill</strong></td>
+          <td><code>12px</code></td>
+          <td>12px 16px</td>
+          <td>Hover lifts 1px; tap opens event detail. Background = category solid.</td>
+        </tr>
+        <tr>
+          <td><strong>TaskPill</strong></td>
+          <td><code>12px</code></td>
+          <td>12px 16px 12px 18px (left pad accommodates 4px accent)</td>
+          <td>Tap toggles expanded (actions inline). Swipe right = complete, swipe left = snooze (Task 10). Urgent swaps left-accent for full red border + soft red fill.</td>
+        </tr>
+        <tr>
+          <td><strong>ThoughtChip</strong></td>
+          <td><code>10px</code></td>
+          <td>6px 10px (collapsed) / 10px 12px (expanded)</td>
+          <td>Dashed border by default (ghost). Hover = solid border + card fill. Tap expands in-place; &ldquo;promote to task&rdquo; is the primary action and is category-colored.</td>
+        </tr>
+        <tr>
+          <td><strong>CaptureFAB</strong></td>
+          <td><code>999px</code></td>
+          <td>56&times;56</td>
+          <td>Sticky bottom-right, 20px inset. Opens capture sheet. Scales 1.04 on hover, 0.98 on press. Focus ring is ink, not blue.</td>
+        </tr>
+        <tr>
+          <td><strong>OverdueDrawer</strong></td>
+          <td><code>14px 14px 0 0</code></td>
+          <td>16px 20px 20px</td>
+          <td>Sticky under WeekView. Top border is <code>--tier-red</code> 1px. Collapses to just the header when empty. Count badge uses <code>--tier-red</code> fill.</td>
+        </tr>
+        <tr>
+          <td><strong>Filter chip</strong></td>
+          <td><code>10px</code></td>
+          <td>6px 12px</td>
+          <td>Inactive = hairline border, dot = category. Active = ink fill, paper text. Horizontal scroll on mobile, scrollbar hidden.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <table class="notes-table" style="margin-top:20px">
+      <thead>
+        <tr><th>Tier</th><th>Fill</th><th>Border</th><th>Use</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>1 &mdash; Fixed block</strong></td>
+          <td><code>--cat-[slug]</code> solid</td>
+          <td>none</td>
+          <td>Calendar events + class blocks &mdash; things you can&rsquo;t move.</td>
+        </tr>
+        <tr>
+          <td><strong>2 &mdash; Task</strong></td>
+          <td><code>--surface-card</code> (urgent: <code>--tier-red-soft</code>)</td>
+          <td>1px hairline + 4px left <code>--cat-[slug]</code>. Urgent overrides with full <code>--tier-red</code>.</td>
+          <td>Your to-dos. Bordered because they&rsquo;re mutable.</td>
+        </tr>
+        <tr>
+          <td><strong>3 &mdash; Thought chip</strong></td>
+          <td>transparent</td>
+          <td>1px dashed hairline (or dotted <code>--cat-[slug]</code>)</td>
+          <td>Surfaced Membase thoughts. Muted on purpose &mdash; don&rsquo;t compete with tasks.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+</div>
+
+<!-- CAPTURE FAB (page-level) -->
+<div class="fab-wrap">
+  <div class="fab-hint">/note</div>
+  <button class="fab" aria-label="Capture note">+</button>
+</div>
+
+</body>
+</html>

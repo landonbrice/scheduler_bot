@@ -22,6 +22,8 @@ class Task:
     weight: str
     done: bool
     notes: Optional[str] = None
+    impact_override: Optional[str] = None  # "critical" | "high" | "medium" | "low" | None
+    priority_boost: Optional[float] = None  # None ≡ 1.0
 
 
 class TasksStore:
@@ -51,6 +53,16 @@ class TasksStore:
             for t in tasks:
                 if t["id"] == task_id:
                     t["done"] = done
+                    self._write(tasks)
+                    return
+            raise TaskNotFoundError(task_id)
+
+    def set_priority_boost(self, task_id: str, boost: float | None) -> None:
+        with self._lock:
+            tasks = self._read()
+            for t in tasks:
+                if t["id"] == task_id:
+                    t["priority_boost"] = boost
                     self._write(tasks)
                     return
             raise TaskNotFoundError(task_id)

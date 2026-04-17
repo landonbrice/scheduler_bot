@@ -295,3 +295,163 @@ async def test_return_tomorrow_keyword(tmp_path):
     deps, _ = _deps_with_search(tmp_path, mem)
     outcome = await process_return("read article | tomorrow", deps=deps)
     assert outcome.trigger_date == "2026-04-17"
+
+
+# --- R2: CaptureResult shape tests ---
+
+from backend.capture import CaptureResult
+from datetime import date as _date
+
+
+def test_capture_result_dataclass_shape():
+    r = CaptureResult(
+        classification="task",
+        confidence=0.9,
+        created_task_id="corpfin-pset-4",
+        undo_token="1-10",
+        memory_stored=True,
+        classifier_offline=False,
+        suggested_category="corpfin",
+        suggested_due=_date(2026, 4, 24),
+        raw_text="pset 4 due friday",
+    )
+    assert r.classification == "task"
+    assert r.created_task_id == "corpfin-pset-4"
+    assert r.suggested_due == _date(2026, 4, 24)
+
+
+from backend.capture import process_note_v2
+
+
+@pytest.mark.asyncio
+async def test_v2_high_confidence_task_returns_task_result(tmp_path):
+    def cls(text, today, **_):
+        return ClassifyResult(
+            kind="task", confidence=0.9,
+            suggested_task=SuggestedTask("corpfin", "Pset 4", "2026-04-24", "pset", "15%"),
+            tags=["corpfin"],
+        )
+    deps, mem = _deps(tmp_path, cls)
+    result = await process_note_v2("pset 4 due friday 15%", chat_id=1, message_id=10, deps=deps)
+    assert result.classification == "task"
+    assert result.created_task_id is not None
+    assert result.undo_token == "1-10"
+    assert result.memory_stored is True
+    assert result.classifier_offline is False
+    assert result.suggested_due == _date(2026, 4, 24)
+    assert result.suggested_category == "corpfin"
+
+
+@pytest.mark.asyncio
+async def test_v2_low_confidence_task_returns_ambiguous(tmp_path):
+    def cls(text, today, **_):
+        return ClassifyResult(
+            kind="task", confidence=0.4,
+            suggested_task=SuggestedTask("life", "call mom", None, "admin", None),
+            tags=["life"],
+        )
+    deps, mem = _deps(tmp_path, cls)
+    result = await process_note_v2("call mom", chat_id=1, message_id=10, deps=deps)
+    assert result.classification == "ambiguous"
+    assert result.created_task_id is None
+    assert result.suggested_category == "life"
+
+
+@pytest.mark.asyncio
+async def test_v2_thought_saves(tmp_path):
+    def cls(text, today, **_):
+        return ClassifyResult(kind="thought", confidence=0.9, suggested_task=None, tags=["projects"])
+    deps, mem = _deps(tmp_path, cls)
+    result = await process_note_v2("the api should be per-team", chat_id=1, message_id=10, deps=deps)
+    assert result.classification == "thought"
+    assert result.memory_stored is True
+
+
+@pytest.mark.asyncio
+async def test_v2_resurface_saves(tmp_path):
+    def cls(text, today, **_):
+        return ClassifyResult(kind="resurface", confidence=0.8, suggested_task=None, tags=[])
+    store = TasksStore(tmp_path / "tasks.json")
+    queue = PendingQueue(tmp_path / "pending.jsonl")
+    buf = UndoBuffer(ttl_seconds=60)
+    mem = FakeMemory()
+    deps = CaptureDeps(
+        tasks=store, undo=buf, pending=queue,
+        memory_store=mem.store, classifier=cls,
+        today_fn=lambda: date(2026, 4, 16),
+        resurface_path=tmp_path / "resurface.jsonl",
+    )
+    result = await process_note_v2(
+        "remind me to read this article later",
+        chat_id=1, message_id=10, deps=deps,
+    )
+    assert result.classification == "resurface"
+
+
+@pytest.mark.asyncio
+async def test_v2_empty_text_returns_ambiguous(tmp_path):
+    def cls(text, today, **_):
+        raise AssertionError("classifier should not be called on empty text")
+    deps, mem = _deps(tmp_path, cls)
+    result = await process_note_v2("", chat_id=1, message_id=10, deps=deps)
+    assert result.classification == "ambiguous"
+    assert result.raw_text == ""
+
+
+@pytest.mark.asyncio
+async def test_v2_classifier_raises_sets_offline(tmp_path):
+    """A raised exception is the ONLY thing that sets classifier_offline=True.
+    A classifier that returns an empty/ambiguous ClassifyResult is not 'offline'."""
+    def cls(text, today, **_):
+        raise RuntimeError("deepseek down")
+    deps, mem = _deps(tmp_path, cls)
+    r = await process_note_v2("anything", chat_id=1, message_id=10, deps=deps)
+    assert r.classifier_offline is True
+    assert r.classification == "ambiguous"
+    # Memory write happens after the try/except, so it still runs.
+    assert r.memory_stored is True
+
+
+@pytest.mark.asyncio
+async def test_v2_memory_failure_memory_stored_false(tmp_path):
+    """When Membase write queues to pending, memory_stored is False."""
+    def cls(text, today, **_):
+        return ClassifyResult(kind="thought", confidence=0.9, suggested_task=None, tags=["projects"])
+    deps, mem = _deps(tmp_path, cls, memory_succeeds=False)
+    r = await process_note_v2("a thought", chat_id=1, message_id=10, deps=deps)
+    assert r.classification == "thought"
+    assert r.memory_stored is False
+    # And the pending queue got it.
+    entries = list(deps.pending.iter_entries())
+    assert len(entries) == 1
+
+
+@pytest.mark.asyncio
+async def test_v2_high_conf_but_no_suggested_task_falls_through_to_ambiguous(tmp_path):
+    """Classifier says task with high confidence but gives no SuggestedTask:
+    we can't create a task out of thin air — fall through to ambiguous."""
+    def cls(text, today, **_):
+        return ClassifyResult(
+            kind="task", confidence=0.9, suggested_task=None, tags=["life"],
+        )
+    deps, mem = _deps(tmp_path, cls)
+    r = await process_note_v2("something", chat_id=1, message_id=10, deps=deps)
+    assert r.classification == "ambiguous"
+    assert r.created_task_id is None
+
+
+def test_capture_result_to_json_hides_private_fields():
+    """_suggested_task is a bot.py handoff — it must not leak into JSON.
+    Public fields tags + defaulted_due MUST be present."""
+    from backend.capture import capture_result_to_json
+    r = CaptureResult(
+        classification="task", confidence=0.9, created_task_id="x-1",
+        undo_token="1-10", memory_stored=True, classifier_offline=False,
+        suggested_category="corpfin", suggested_due=_date(2026, 4, 24),
+        raw_text="pset 4", defaulted_due=False, tags=("corpfin",),
+        _suggested_task=SuggestedTask("corpfin", "Pset 4", "2026-04-24", "pset", "15%"),
+    )
+    body = capture_result_to_json(r)
+    assert "_suggested_task" not in body
+    assert "tags" in body and body["tags"] == ["corpfin"]
+    assert "defaulted_due" in body and body["defaulted_due"] is False

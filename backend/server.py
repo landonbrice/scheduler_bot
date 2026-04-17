@@ -1,22 +1,42 @@
 from __future__ import annotations
+import json as _json
 import re
+import sys
+import time
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta, timezone as _tz
+from datetime import datetime as _dt2
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import priority
 from .auth import verify_init_data, InitDataInvalid, TelegramUser
 from .briefing import generate_briefing
+from .capture import CaptureDeps, process_note_v2, capture_result_to_json
+from .classifier import classify as _default_classify
 from .config import load_settings, PROJECT_ROOT
 from .gcal import fetch_events
+from .memory import search_memory as _search_memory
+from .memory import store_memory as _store_memory_fn
+from .pending_queue import PendingQueue
+from .schedule import load_schedule, week_instances
+from .suggest import pick_task, RateLimiter
+from .surfacing import surface_week, load_dismissed
 from .tasks_store import Task, TasksStore, TaskNotFoundError
+from .undo_buffer import UndoBuffer
 
 
 settings = load_settings()
 store = TasksStore(settings.tasks_path)
+_schedule_path = PROJECT_ROOT / "data" / "schedule.json"
+_data_dir = Path(settings.tasks_path).parent
+_server_classifier = _default_classify
+_server_undo = UndoBuffer(ttl_seconds=60)
+_server_pending = PendingQueue(_data_dir / "membase_pending.jsonl")
+_suggest_rl = RateLimiter(capacity=5, refill_per_minute=5)
 app = FastAPI(title="Academic Scheduler API")
 
 app.add_middleware(
@@ -51,7 +71,13 @@ class AddTaskBody(BaseModel):
 
 @app.get("/api/tasks")
 def get_tasks(_: TelegramUser = Depends(current_user)):
-    return {"tasks": [t.__dict__ for t in store.list()]}
+    now = datetime.now()
+    enriched = []
+    for t in store.list():
+        score = priority.compute(t, now)
+        tier_ = priority.tier(score, urgent_flag=(t.priority_boost == 1.5))
+        enriched.append({**t.__dict__, "priority_score": round(score, 2), "tier": tier_})
+    return {"tasks": enriched}
 
 
 @app.post("/api/tasks/{task_id}/done")
@@ -95,10 +121,91 @@ def add_task(body: AddTaskBody, _: TelegramUser = Depends(current_user)):
     return {"task": task.__dict__}
 
 
+def _server_deps() -> CaptureDeps:
+    this_mod = sys.modules[__name__]
+    return CaptureDeps(
+        tasks=store,
+        undo=_server_undo,
+        pending=_server_pending,
+        memory_store=_store_memory_fn,
+        classifier=this_mod._server_classifier,
+        today_fn=lambda: date.today(),
+        resurface_path=_data_dir / "resurface.jsonl",
+    )
+
+
+class CaptureNoteBody(BaseModel):
+    text: str
+
+
+@app.post("/api/capture/note")
+async def api_capture_note(
+    body: CaptureNoteBody,
+    user: TelegramUser = Depends(current_user),
+):
+    chat_id = int(user.user_id)
+    # Different Mini App captures must not collide on (chat_id, message_id).
+    message_id = int(time.time() * 1000) % 1_000_000_000
+    r = await process_note_v2(
+        body.text, chat_id=chat_id, message_id=message_id, deps=_server_deps(),
+    )
+    return capture_result_to_json(r)
+
+
+@app.post("/api/tasks/{task_id}/flag")
+def flag_task(task_id: str, _: TelegramUser = Depends(current_user)):
+    tasks = {t.id: t for t in store.list()}
+    if task_id not in tasks:
+        raise HTTPException(404, f"no task {task_id!r}")
+    current = tasks[task_id].priority_boost
+    new_val = None if current == 1.5 else 1.5
+    store.set_priority_boost(task_id, new_val)
+    return {"task_id": task_id, "priority_boost": new_val}
+
+
+@app.post("/api/tasks/{task_id}/undo-create")
+def undo_create(task_id: str, _: TelegramUser = Depends(current_user)):
+    before = store.list()
+    remaining = [t for t in before if t.id != task_id]
+    if len(remaining) == len(before):
+        raise HTTPException(404, f"no task {task_id!r}")
+    store.replace_all(remaining)
+    return {"ok": True, "deleted": task_id}
+
+
 @app.get("/api/calendar")
 def get_calendar(_: TelegramUser = Depends(current_user)):
     events = fetch_events(date.today(), days=7)
     return {"events": [e.as_dict() for e in events]}
+
+
+@app.get("/api/schedule")
+def get_schedule(
+    start: str | None = None,
+    _: TelegramUser = Depends(current_user),
+):
+    sched = load_schedule(_schedule_path)
+    if start:
+        try:
+            week_start = date.fromisoformat(start)
+        except ValueError:
+            raise HTTPException(400, "start must be ISO YYYY-MM-DD")
+        week_start = week_start - timedelta(days=week_start.weekday())
+    else:
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())  # Monday
+    instances = week_instances(sched, week_start=week_start)
+    return {
+        "term_start": sched.term_start.isoformat() if sched.term_start else None,
+        "term_end": sched.term_end.isoformat() if sched.term_end else None,
+        "week_start": week_start.isoformat(),
+        "instances": [
+            {"title": i.title, "category": i.category,
+             "date": i.instance_date.isoformat(),
+             "start": i.start, "end": i.end, "location": i.location}
+            for i in instances
+        ],
+    }
 
 
 @app.get("/api/briefing")
@@ -106,6 +213,163 @@ def get_briefing(_: TelegramUser = Depends(current_user)):
     events = fetch_events(date.today(), days=1)
     text = generate_briefing(store.list(), today=date.today(), events=events)
     return {"text": text}
+
+
+@app.get("/api/suggest")
+async def api_suggest(duration: int, start_iso: str, user: TelegramUser = Depends(current_user)):
+    now = datetime.now()
+    if not _suggest_rl.allow(str(user.user_id), now):
+        # Rate-limit trip → fallback, not 429.
+        from .suggest import _fallback
+        return {**_fallback(store.list(), duration, now), "rate_limited": True}
+    result = await pick_task(
+        tasks=store.list(), duration_min=duration, start_iso=start_iso, now=now,
+    )
+    return result
+
+
+_dismissed_path = PROJECT_ROOT / "data" / "dismissed.jsonl"
+_resurface_path = PROJECT_ROOT / "data" / "resurface.jsonl"
+_settings_path = PROJECT_ROOT / "data" / "settings.json"
+_categories_path = PROJECT_ROOT / "data" / "categories.json"
+
+
+def _load_json(path: Path, default):
+    try:
+        return _json.loads(path.read_text())
+    except (FileNotFoundError, _json.JSONDecodeError):
+        return default
+
+
+def _atomic_write_json(path: Path, obj) -> None:
+    import os as _os
+    import tempfile as _tf
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = _tf.mkstemp(dir=str(path.parent))
+    with _os.fdopen(fd, "w") as f:
+        f.write(_json.dumps(obj, indent=2))
+    _os.replace(tmp, path)
+
+
+@app.get("/api/settings")
+def get_settings(_: TelegramUser = Depends(current_user)):
+    s = _load_json(
+        _settings_path,
+        {"included_calendar_ids": [], "show_priority_score": False},
+    )
+    c = _load_json(_categories_path, {})
+    return {"settings": s, "categories": c}
+
+
+class SettingsBody(BaseModel):
+    included_calendar_ids: list[str]
+    show_priority_score: bool
+
+
+@app.put("/api/settings")
+def put_settings(body: SettingsBody, _: TelegramUser = Depends(current_user)):
+    _atomic_write_json(_settings_path, body.model_dump())
+    return {"ok": True}
+
+
+class CategoriesBody(BaseModel):
+    categories: dict
+
+
+@app.put("/api/categories")
+def put_categories(body: CategoriesBody, _: TelegramUser = Depends(current_user)):
+    _atomic_write_json(_categories_path, body.categories)
+    return {"ok": True}
+
+
+@app.get("/api/calendars/available")
+def get_available_calendars(_: TelegramUser = Depends(current_user)):
+    from .gcal import list_available_calendars
+    return {"calendars": list_available_calendars()}
+
+
+def _load_resurface_by_day(week_start, week_end) -> dict:
+    out: dict = {}
+    try:
+        lines = _resurface_path.read_text().strip().splitlines()
+    except FileNotFoundError:
+        return {}
+    from datetime import date as _d_local
+    for line in lines:
+        try:
+            row = _json.loads(line)
+            td = row.get("trigger_date")
+            if not td:
+                continue
+            day = _d_local.fromisoformat(td)
+            if week_start <= day <= week_end:
+                out.setdefault(day, []).append(row)
+        except (ValueError, KeyError):
+            continue
+    return out
+
+
+@app.get("/api/notes/surfaced")
+async def get_surfaced(start: str, days: int = 7, _: TelegramUser = Depends(current_user)):
+    from datetime import date as _d_local, timedelta as _td_local
+    try:
+        week_start = _d_local.fromisoformat(start)
+    except ValueError:
+        raise HTTPException(400, "start must be ISO YYYY-MM-DD")
+    dates = [week_start + _td_local(days=i) for i in range(days)]
+    now = _dt2.now(tz=_tz.utc)
+    tasks = store.list()
+    tasks_by_day: dict = {}
+    for t in tasks:
+        try:
+            td = _d_local.fromisoformat(t.due)
+            if dates[0] <= td <= dates[-1]:
+                tasks_by_day.setdefault(td, []).append(t.__dict__)
+        except ValueError:
+            continue
+    events = fetch_events(week_start, days=days)
+    events_by_day: dict = {}
+    for e in events:
+        try:
+            ed_dict = e.as_dict() if hasattr(e, "as_dict") else (e if isinstance(e, dict) else e.__dict__)
+            ed = _d_local.fromisoformat(str(ed_dict["start"])[:10])
+            events_by_day.setdefault(ed, []).append(ed_dict)
+        except (ValueError, KeyError, AttributeError):
+            continue
+    resurface_by_day = _load_resurface_by_day(dates[0], dates[-1])
+    chips_by_day = await surface_week(
+        dates=dates, tasks_by_day=tasks_by_day, events_by_day=events_by_day,
+        resurface_by_day=resurface_by_day, dismissed_path=_dismissed_path,
+        memory_search=_search_memory, now=now,
+    )
+    return {"surfaced": {d.isoformat(): chips for d, chips in chips_by_day.items()}}
+
+
+@app.get("/api/notes/search")
+async def search_notes(q: str, _: TelegramUser = Depends(current_user)):
+    if not q.strip():
+        return {"results": [], "offline": False}
+    try:
+        hits = await _search_memory(q, 20)
+    except Exception:
+        return {"results": [], "offline": True}
+    return {"results": hits, "offline": False}
+
+
+class DismissBody(BaseModel):
+    memory_id: str
+
+
+@app.post("/api/capture/note/dismiss")
+def dismiss_memory(body: DismissBody, _: TelegramUser = Depends(current_user)):
+    entry = {
+        "memory_id": body.memory_id,
+        "dismissed_at": _dt2.now(tz=_tz.utc).isoformat(),
+    }
+    _dismissed_path.parent.mkdir(parents=True, exist_ok=True)
+    with _dismissed_path.open("a") as f:
+        f.write(_json.dumps(entry) + "\n")
+    return {"ok": True}
 
 
 _static_dir = PROJECT_ROOT / "backend" / "static"

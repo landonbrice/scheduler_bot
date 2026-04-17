@@ -125,3 +125,20 @@ def fetch_events(today: date, days: int = 7) -> list[CalendarEvent]:
     except Exception as e:
         log.warning("calendar fetch failed: %s", e)
         return []
+
+
+def list_available_calendars() -> list[dict]:
+    """Return [{id, summary}] for every reader-visible calendar. Fail-soft to []."""
+    try:
+        service = _build_service()
+        resp = service.calendarList().list(minAccessRole="reader").execute()
+        return [
+            {"id": c["id"], "summary": c.get("summary", c["id"])}
+            for c in resp.get("items", [])
+        ]
+    except TokenMissing as e:
+        log.warning("list_available_calendars disabled: %s", e)
+        return []
+    except Exception:
+        log.warning("list_available_calendars failed", exc_info=True)
+        return []
