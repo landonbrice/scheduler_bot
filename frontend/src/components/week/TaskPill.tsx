@@ -1,4 +1,5 @@
 import type { TaskWithPriority } from "../../types";
+import { useSwipe } from "../../hooks/useSwipe";
 import { categorySlug } from "./category";
 
 export interface TaskPillProps {
@@ -12,7 +13,8 @@ export interface TaskPillProps {
 /**
  * Tier-2 pill: bordered, category left-accent, tier-driven urgency.
  * Checkbox on the left, body label + meta row, optional score badge,
- * category badge on the right. Swipe gestures deferred to Task 10.
+ * category badge on the right. Swipe right toggles done; swipe left
+ * toggles the urgent (priority_boost) flag.
  */
 export function TaskPill({
   task,
@@ -25,6 +27,11 @@ export function TaskPill({
   const boosted = task.priority_boost === 1.5;
   const tier = boosted ? "red" : task.tier;
   const urgent = tier === "red";
+
+  const swipe = useSwipe({
+    onSwipeRight: () => onToggle(task.id, !task.done),
+    onSwipeLeft: () => onFlag(task.id),
+  });
 
   // Background: soft-red for urgent, paper card otherwise.
   const bg = urgent ? "var(--tier-red-soft)" : "var(--surface-card)";
@@ -61,6 +68,8 @@ export function TaskPill({
       role="button"
       tabIndex={0}
       onClick={handlePillClick}
+      {...swipe}
+      onTouchMove={(e) => e.stopPropagation()}
       data-urgent={urgent || undefined}
       data-due={tier === "amber" ? "today" : undefined}
       data-task-id={task.id}
