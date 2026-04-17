@@ -61,13 +61,22 @@ def load_schedule(path: Path) -> Schedule:
     term = raw.get("term") or {}
     classes: list[ScheduleClass] = []
     for c in raw.get("classes") or []:
-        exc = tuple(
-            ScheduleException(
-                exc_date=date.fromisoformat(e["date"]),
-                action=str(e.get("action", "cancel")),
+        exc_list: list[ScheduleException] = []
+        for e in (c.get("exceptions") or []):
+            action = str(e.get("action", "cancel"))
+            if action != "cancel":
+                log.warning(
+                    "schedule.json: ignoring unsupported exception action %r on %s (R2 supports cancel only)",
+                    action, c.get("title", "?"),
+                )
+                continue
+            exc_list.append(
+                ScheduleException(
+                    exc_date=date.fromisoformat(e["date"]),
+                    action=action,
+                )
             )
-            for e in (c.get("exceptions") or [])
-        )
+        exc = tuple(exc_list)
         classes.append(ScheduleClass(
             title=str(c["title"]),
             category=str(c["category"]),
@@ -88,9 +97,9 @@ def week_instances(sched: Schedule, *, week_start: date) -> list[ClassInstance]:
     """Expand every class's days into concrete date instances for the week
     starting on `week_start` (expected to be a Monday). Applies cancel
     exceptions. Filters strictly by term bounds."""
-    if sched.term_start and week_start > sched.term_end:
+    if sched.term_end and week_start > sched.term_end:
         return []
-    if sched.term_end and (week_start + timedelta(days=6)) < sched.term_start:
+    if sched.term_start and (week_start + timedelta(days=6)) < sched.term_start:
         return []
 
     out: list[ClassInstance] = []

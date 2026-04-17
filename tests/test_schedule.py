@@ -62,3 +62,76 @@ def test_load_schedule_missing_file_returns_empty():
     sched = load_schedule(Path("/nonexistent/schedule.json"))
     assert sched.classes == ()
     assert sched.term_start is None
+
+
+def test_load_schedule_drops_unsupported_exception_action(tmp_path, caplog):
+    p = tmp_path / "schedule.json"
+    p.write_text(json.dumps({
+        "term": {"start": "2026-03-30", "end": "2026-06-05"},
+        "classes": [{
+            "title": "SCS III", "category": "SCS III",
+            "days": ["Mon"], "start": "15:00", "end": "16:20",
+            "location": "x",
+            "exceptions": [
+                {"date": "2026-04-20", "action": "cancel"},
+                {"date": "2026-04-27", "action": "reschedule"},
+            ],
+        }],
+    }))
+    import logging
+    with caplog.at_level(logging.WARNING, logger="backend.schedule"):
+        sched = load_schedule(p)
+    cls = sched.classes[0]
+    assert len(cls.exceptions) == 1
+    assert cls.exceptions[0].action == "cancel"
+    assert any("reschedule" in rec.message for rec in caplog.records)
+
+
+def test_week_instances_skips_unknown_day_name(tmp_path):
+    p = tmp_path / "schedule.json"
+    p.write_text(json.dumps({
+        "term": {"start": "2026-03-30", "end": "2026-06-05"},
+        "classes": [{
+            "title": "Ghost", "category": "x",
+            "days": ["Xyz", "Mon"], "start": "09:00", "end": "10:00",
+            "location": "x", "exceptions": [],
+        }],
+    }))
+    sched = load_schedule(p)
+    instances = week_instances(sched, week_start=date(2026, 4, 13))
+    assert len(instances) == 1
+    assert instances[0].instance_date == date(2026, 4, 13)
+
+
+def test_week_instances_when_only_term_start_set(tmp_path):
+    # Regression for the None-compare bug in term-bound prune.
+    p = tmp_path / "schedule.json"
+    p.write_text(json.dumps({
+        "term": {"start": "2026-03-30"},
+        "classes": [{
+            "title": "Any", "category": "x",
+            "days": ["Mon"], "start": "09:00", "end": "10:00",
+            "location": "x", "exceptions": [],
+        }],
+    }))
+    sched = load_schedule(p)
+    assert sched.term_end is None
+    # Should NOT raise TypeError.
+    instances = week_instances(sched, week_start=date(2026, 4, 13))
+    assert len(instances) == 1
+
+
+def test_week_instances_when_only_term_end_set(tmp_path):
+    p = tmp_path / "schedule.json"
+    p.write_text(json.dumps({
+        "term": {"end": "2026-06-05"},
+        "classes": [{
+            "title": "Any", "category": "x",
+            "days": ["Mon"], "start": "09:00", "end": "10:00",
+            "location": "x", "exceptions": [],
+        }],
+    }))
+    sched = load_schedule(p)
+    assert sched.term_start is None
+    instances = week_instances(sched, week_start=date(2026, 4, 13))
+    assert len(instances) == 1

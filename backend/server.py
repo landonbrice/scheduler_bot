@@ -121,6 +121,7 @@ def get_schedule(
             week_start = date.fromisoformat(start)
         except ValueError:
             raise HTTPException(400, "start must be ISO YYYY-MM-DD")
+        week_start = week_start - timedelta(days=week_start.weekday())
     else:
         today = date.today()
         week_start = today - timedelta(days=today.weekday())  # Monday

@@ -130,3 +130,13 @@ def test_schedule_endpoint_returns_week(client):
     body = resp.json()
     assert body["week_start"] == "2026-04-13"
     assert isinstance(body["instances"], list)
+
+
+def test_schedule_endpoint_normalizes_start_to_monday(client):
+    # Wed 2026-04-15 → Monday 2026-04-13
+    resp = client.get(
+        "/api/schedule?start=2026-04-15",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["week_start"] == "2026-04-13"
