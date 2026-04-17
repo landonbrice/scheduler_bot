@@ -53,6 +53,16 @@ class CaptureResult:
     suggested_category: str | None
     suggested_due: _date_type | None
     raw_text: str
+    # Below this line: fields with defaults (dataclass ordering rule).
+    # `defaulted_due` is logically an orchestrator-side flag (true iff the
+    # task branch fell back to today+7 because the classifier didn't extract
+    # a due date); default False is correct for all non-task branches.
+    defaulted_due: bool = False
+    tags: tuple[str, ...] = ()
+    # Private: carries the classifier's raw SuggestedTask for the ambiguous
+    # branch so bot.py doesn't re-invoke the classifier. Not serialized to
+    # JSON (see capture_result_to_json — the leading underscore is the signal).
+    _suggested_task: SuggestedTask | None = None
 
 
 @dataclass(frozen=True)
@@ -176,13 +186,14 @@ async def process_note_v2(text: str, *, chat_id: int, message_id: int, deps: Cap
         return CaptureResult(
             classification="ambiguous", confidence=0.0, created_task_id=None,
             undo_token=None, memory_stored=False, classifier_offline=False,
-            suggested_category=None, suggested_due=None, raw_text="",
+            defaulted_due=False, suggested_category=None, suggested_due=None,
+            raw_text="", tags=(), _suggested_task=None,
         )
 
     today = deps.today_fn()
+    classifier_offline = False
     try:
         result: ClassifyResult = deps.classifier(raw_text, today)
-        classifier_offline = result.kind == "ambiguous" and result.confidence == 0.0 and not result.suggested_task and not result.tags
     except Exception:
         log.warning("classifier raised inside process_note_v2", exc_info=True)
         result = ClassifyResult(kind="ambiguous", confidence=0.0, suggested_task=None, tags=[])
@@ -199,12 +210,14 @@ async def process_note_v2(text: str, *, chat_id: int, message_id: int, deps: Cap
             suggested_due = _date_type.fromisoformat(result.suggested_task.due)
         except ValueError:
             suggested_due = None
+    tags_tuple = tuple(result.tags)
 
     if result.kind == "thought":
         return CaptureResult(
             classification="thought", confidence=result.confidence, created_task_id=None,
             undo_token=None, memory_stored=memory_stored, classifier_offline=classifier_offline,
-            suggested_category=suggested_category, suggested_due=suggested_due, raw_text=raw_text,
+            defaulted_due=False, suggested_category=suggested_category, suggested_due=suggested_due,
+            raw_text=raw_text, tags=tags_tuple, _suggested_task=result.suggested_task,
         )
     if result.kind == "resurface":
         trigger = (today + timedelta(days=DEFAULT_RESURFACE_OFFSET_DAYS)).isoformat()
@@ -212,13 +225,15 @@ async def process_note_v2(text: str, *, chat_id: int, message_id: int, deps: Cap
         return CaptureResult(
             classification="resurface", confidence=result.confidence, created_task_id=None,
             undo_token=None, memory_stored=memory_stored, classifier_offline=classifier_offline,
-            suggested_category=suggested_category, suggested_due=suggested_due, raw_text=raw_text,
+            defaulted_due=False, suggested_category=suggested_category, suggested_due=suggested_due,
+            raw_text=raw_text, tags=tags_tuple, _suggested_task=result.suggested_task,
         )
     if result.kind == "ambiguous" or (result.kind == "task" and result.confidence < HIGH_CONFIDENCE):
         return CaptureResult(
             classification="ambiguous", confidence=result.confidence, created_task_id=None,
             undo_token=None, memory_stored=memory_stored, classifier_offline=classifier_offline,
-            suggested_category=suggested_category, suggested_due=suggested_due, raw_text=raw_text,
+            defaulted_due=False, suggested_category=suggested_category, suggested_due=suggested_due,
+            raw_text=raw_text, tags=tags_tuple, _suggested_task=result.suggested_task,
         )
 
     suggested = result.suggested_task
@@ -226,8 +241,10 @@ async def process_note_v2(text: str, *, chat_id: int, message_id: int, deps: Cap
         return CaptureResult(
             classification="ambiguous", confidence=result.confidence, created_task_id=None,
             undo_token=None, memory_stored=memory_stored, classifier_offline=classifier_offline,
-            suggested_category=suggested_category, suggested_due=suggested_due, raw_text=raw_text,
+            defaulted_due=False, suggested_category=suggested_category, suggested_due=suggested_due,
+            raw_text=raw_text, tags=tags_tuple, _suggested_task=result.suggested_task,
         )
+    defaulted_due = suggested.due is None
     due = suggested.due or (today + timedelta(days=DEFAULT_TASK_DUE_OFFSET_DAYS)).isoformat()
     existing = {t.id for t in deps.tasks.list()}
     task_id = _task_id_from(suggested.category, suggested.name, existing)
@@ -241,8 +258,9 @@ async def process_note_v2(text: str, *, chat_id: int, message_id: int, deps: Cap
     return CaptureResult(
         classification="task", confidence=result.confidence, created_task_id=task_id,
         undo_token=undo_token, memory_stored=memory_stored, classifier_offline=False,
-        suggested_category=suggested.category, suggested_due=_date_type.fromisoformat(due),
-        raw_text=raw_text,
+        defaulted_due=defaulted_due, suggested_category=suggested.category,
+        suggested_due=_date_type.fromisoformat(due), raw_text=raw_text,
+        tags=tags_tuple, _suggested_task=result.suggested_task,
     )
 
 
@@ -382,7 +400,11 @@ def write_resurface(deps: CaptureDeps, *, text: str, trigger_date: str | None, t
 
 
 def capture_result_to_json(r: CaptureResult) -> dict:
-    """Render a CaptureResult as the JSON response body for /api/capture/note."""
+    """Render a CaptureResult as the JSON response body for /api/capture/note.
+
+    `_suggested_task` is intentionally omitted — the leading underscore marks
+    it as a bot.py-internal handoff, not part of the public JSON contract.
+    """
     return {
         "classification": r.classification,
         "confidence": round(r.confidence, 3),
@@ -390,7 +412,9 @@ def capture_result_to_json(r: CaptureResult) -> dict:
         "undo_token": r.undo_token,
         "memory_stored": r.memory_stored,
         "classifier_offline": r.classifier_offline,
+        "defaulted_due": r.defaulted_due,
         "suggested_category": r.suggested_category,
         "suggested_due": r.suggested_due.isoformat() if r.suggested_due else None,
         "raw_text": r.raw_text,
+        "tags": list(r.tags),
     }

@@ -197,18 +197,15 @@ def _format_task_reply_v2(result: CaptureResult, deps: CaptureDeps) -> str:
     if task.weight:
         parts.append(_esc(task.weight))
     parts.append(f"type {_esc(task.type)}")
-    # Reconstruct the defaulted_due flag: task was defaulted iff the classifier
-    # returned no due (suggested_due coming from the raw SuggestedTask.due was
-    # None). We can detect this by comparing task.due to (today + 7d).
-    today = deps.today_fn()
-    default_due = (today + timedelta(days=DEFAULT_TASK_DUE_OFFSET_DAYS)).isoformat()
-    defaulted = task.due == default_due
-    flag = " ⚠️ no due date found; defaulted" if defaulted else ""
+    flag = " ⚠️ no due date found; defaulted" if result.defaulted_due else ""
     return ". ".join(parts) + "." + flag + '\nReply "undo" within 60s to revert.'
 
 
 def _format_thought_reply_v2(result: CaptureResult) -> str:
-    lines = ["💭 Saved."]
+    head = "💭 Saved."
+    if result.tags:
+        head += f" Tagged: [{', '.join(_esc(tag) for tag in result.tags)}]"
+    lines = [head]
     if not result.memory_stored:
         lines.append("  (Membase unavailable — queued locally.)")
     return "\n".join(lines)
@@ -222,16 +219,18 @@ def _format_resurface_reply_v2(deps: CaptureDeps) -> str:
 
 
 def _format_capture_result(result: CaptureResult, deps: CaptureDeps) -> str:
-    """Renderer dispatch for CaptureResult → Telegram text (non-ambiguous)."""
+    """Renderer dispatch for CaptureResult → Telegram text (non-ambiguous).
+
+    Ambiguous is handled by the caller with inline buttons and must not
+    reach this dispatcher; unknown classifications are a programmer error.
+    """
     if result.classification == "task":
         return _format_task_reply_v2(result, deps)
     if result.classification == "thought":
         return _format_thought_reply_v2(result)
     if result.classification == "resurface":
         return _format_resurface_reply_v2(deps)
-    # ambiguous handled by caller with inline buttons — this path is for when
-    # text rendering is desired without buttons (not used by cmd_note).
-    return "(ambiguous)"
+    raise ValueError(f"unexpected classification: {result.classification!r}")
 
 
 async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -258,14 +257,20 @@ async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     # ambiguous
     pending_id = f"{msg.chat_id}-{msg.message_id}"
-    # Re-run the classifier once to recover the SuggestedTask (since CaptureResult
-    # only carries category/due, not the full SuggestedTask). The classifier is
-    # idempotent; calling it again is cheap in tests and a small cost in prod.
-    try:
-        reclass = deps.classifier(text.strip(), deps.today_fn())
-        suggested_task = reclass.suggested_task
-    except Exception:
-        suggested_task = None
+    # CaptureResult carries the original SuggestedTask on a private field so
+    # we don't re-invoke the classifier (DeepSeek roundtrip). If the classifier
+    # produced no SuggestedTask AND the orchestrator gave us a category, build
+    # a minimal placeholder the user can still confirm/edit.
+    suggested_task = result._suggested_task
+    if suggested_task is None and result.suggested_category is not None:
+        today = deps.today_fn()
+        suggested_task = SuggestedTask(
+            category=result.suggested_category,
+            name=(text.strip()[:80] or "captured note"),
+            due=(today + timedelta(days=DEFAULT_TASK_DUE_OFFSET_DAYS)).isoformat(),
+            type="admin",
+            weight=None,
+        )
     context.bot_data.setdefault("pending", {})[pending_id] = {
         "raw_text": text,
         "suggested_task": suggested_task,
