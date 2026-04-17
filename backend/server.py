@@ -1,7 +1,9 @@
 from __future__ import annotations
+import json as _json
 import re
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone as _tz
+from datetime import datetime as _dt2
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +15,9 @@ from .auth import verify_init_data, InitDataInvalid, TelegramUser
 from .briefing import generate_briefing
 from .config import load_settings, PROJECT_ROOT
 from .gcal import fetch_events
+from .memory import search_memory as _search_memory
 from .schedule import load_schedule, week_instances
+from .surfacing import surface_week, load_dismissed
 from .tasks_store import Task, TasksStore, TaskNotFoundError
 
 
@@ -144,6 +148,94 @@ def get_briefing(_: TelegramUser = Depends(current_user)):
     events = fetch_events(date.today(), days=1)
     text = generate_briefing(store.list(), today=date.today(), events=events)
     return {"text": text}
+
+
+_dismissed_path = PROJECT_ROOT / "data" / "dismissed.jsonl"
+_resurface_path = PROJECT_ROOT / "data" / "resurface.jsonl"
+
+
+def _load_resurface_by_day(week_start, week_end) -> dict:
+    out: dict = {}
+    try:
+        lines = _resurface_path.read_text().strip().splitlines()
+    except FileNotFoundError:
+        return {}
+    from datetime import date as _d_local
+    for line in lines:
+        try:
+            row = _json.loads(line)
+            td = row.get("trigger_date")
+            if not td:
+                continue
+            day = _d_local.fromisoformat(td)
+            if week_start <= day <= week_end:
+                out.setdefault(day, []).append(row)
+        except (ValueError, KeyError):
+            continue
+    return out
+
+
+@app.get("/api/notes/surfaced")
+async def get_surfaced(start: str, days: int = 7, _: TelegramUser = Depends(current_user)):
+    from datetime import date as _d_local, timedelta as _td_local
+    try:
+        week_start = _d_local.fromisoformat(start)
+    except ValueError:
+        raise HTTPException(400, "start must be ISO YYYY-MM-DD")
+    dates = [week_start + _td_local(days=i) for i in range(days)]
+    now = _dt2.now(tz=_tz.utc)
+    tasks = store.list()
+    tasks_by_day: dict = {}
+    for t in tasks:
+        try:
+            td = _d_local.fromisoformat(t.due)
+            if dates[0] <= td <= dates[-1]:
+                tasks_by_day.setdefault(td, []).append(t.__dict__)
+        except ValueError:
+            continue
+    events = fetch_events(week_start, days=days)
+    events_by_day: dict = {}
+    for e in events:
+        try:
+            ed_dict = e.as_dict() if hasattr(e, "as_dict") else (e if isinstance(e, dict) else e.__dict__)
+            ed = _d_local.fromisoformat(str(ed_dict["start"])[:10])
+            events_by_day.setdefault(ed, []).append(ed_dict)
+        except (ValueError, KeyError, AttributeError):
+            continue
+    resurface_by_day = _load_resurface_by_day(dates[0], dates[-1])
+    chips_by_day = await surface_week(
+        dates=dates, tasks_by_day=tasks_by_day, events_by_day=events_by_day,
+        resurface_by_day=resurface_by_day, dismissed_path=_dismissed_path,
+        memory_search=_search_memory, now=now,
+    )
+    return {"surfaced": {d.isoformat(): chips for d, chips in chips_by_day.items()}}
+
+
+@app.get("/api/notes/search")
+async def search_notes(q: str, _: TelegramUser = Depends(current_user)):
+    if not q.strip():
+        return {"results": [], "offline": False}
+    try:
+        hits = await _search_memory(q, 20)
+    except Exception:
+        return {"results": [], "offline": True}
+    return {"results": hits, "offline": False}
+
+
+class DismissBody(BaseModel):
+    memory_id: str
+
+
+@app.post("/api/capture/note/dismiss")
+def dismiss_memory(body: DismissBody, _: TelegramUser = Depends(current_user)):
+    entry = {
+        "memory_id": body.memory_id,
+        "dismissed_at": _dt2.now(tz=_tz.utc).isoformat(),
+    }
+    _dismissed_path.parent.mkdir(parents=True, exist_ok=True)
+    with _dismissed_path.open("a") as f:
+        f.write(_json.dumps(entry) + "\n")
+    return {"ok": True}
 
 
 _static_dir = PROJECT_ROOT / "backend" / "static"

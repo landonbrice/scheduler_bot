@@ -16,3 +16,4 @@ frontend/tsconfig.tsbuildinfo
 data/membase_pending.jsonl
 data/resurface.jsonl
 data/schedule.json
+data/dismissed.jsonl

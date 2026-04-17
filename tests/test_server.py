@@ -140,3 +140,32 @@ def test_schedule_endpoint_normalizes_start_to_monday(client):
     )
     assert resp.status_code == 200
     assert resp.json()["week_start"] == "2026-04-13"
+
+
+def test_surfaced_requires_auth(client):
+    resp = client.get("/api/notes/surfaced?start=2026-04-13")
+    assert resp.status_code == 401
+
+
+def test_search_requires_auth(client):
+    resp = client.get("/api/notes/search?q=hi")
+    assert resp.status_code == 401
+
+
+def test_dismiss_requires_auth(client):
+    resp = client.post("/api/capture/note/dismiss", json={"memory_id": "m1"})
+    assert resp.status_code == 401
+
+
+def test_dismiss_appends_entry(client, tmp_path, monkeypatch):
+    from backend import server as srv
+    p = tmp_path / "dismissed.jsonl"
+    monkeypatch.setattr(srv, "_dismissed_path", p)
+    resp = client.post(
+        "/api/capture/note/dismiss",
+        json={"memory_id": "m42"},
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert resp.status_code == 200
+    assert p.exists()
+    assert "m42" in p.read_text()
