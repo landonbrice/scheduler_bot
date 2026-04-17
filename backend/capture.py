@@ -10,6 +10,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from datetime import date as _date_type
 from typing import Any, Awaitable, Callable, Literal
 
 from .classifier import ClassifyResult, SuggestedTask
@@ -36,6 +37,22 @@ class CaptureDeps:
     classifier: Classifier
     today_fn: Callable[[], date]
     resurface_path: Any = None  # pathlib.Path, set by caller; optional in tests
+
+
+@dataclass(frozen=True)
+class CaptureResult:
+    """Renderer-agnostic outcome of process_note. Consumed by both bot.py
+    (Telegram reply) and server.py (JSON). Orchestrator is the single
+    source of truth for capture semantics — renderers only format."""
+    classification: Literal["task", "thought", "resurface", "ambiguous"]
+    confidence: float
+    created_task_id: str | None
+    undo_token: str | None
+    memory_stored: bool
+    classifier_offline: bool
+    suggested_category: str | None
+    suggested_due: _date_type | None
+    raw_text: str
 
 
 @dataclass(frozen=True)
@@ -149,6 +166,83 @@ async def process_note(text: str, chat_id: int, message_id: int, deps: CaptureDe
         tags=result.tags,
         defaulted_due=defaulted,
         membase_queued=queued,
+    )
+
+
+async def process_note_v2(text: str, *, chat_id: int, message_id: int, deps: CaptureDeps) -> CaptureResult:
+    """CaptureResult-returning variant. Shares core logic with process_note."""
+    raw_text = text.strip()
+    if not raw_text:
+        return CaptureResult(
+            classification="ambiguous", confidence=0.0, created_task_id=None,
+            undo_token=None, memory_stored=False, classifier_offline=False,
+            suggested_category=None, suggested_due=None, raw_text="",
+        )
+
+    today = deps.today_fn()
+    try:
+        result: ClassifyResult = deps.classifier(raw_text, today)
+        classifier_offline = result.kind == "ambiguous" and result.confidence == 0.0 and not result.suggested_task and not result.tags
+    except Exception:
+        log.warning("classifier raised inside process_note_v2", exc_info=True)
+        result = ClassifyResult(kind="ambiguous", confidence=0.0, suggested_task=None, tags=[])
+        classifier_offline = True
+
+    project = _pick_project(result.tags) if result.tags else None
+    queued = await _store_or_queue(deps, f"[NOTE] {raw_text}", project)
+    memory_stored = not queued
+
+    suggested_category = result.suggested_task.category if result.suggested_task else None
+    suggested_due: _date_type | None = None
+    if result.suggested_task and result.suggested_task.due:
+        try:
+            suggested_due = _date_type.fromisoformat(result.suggested_task.due)
+        except ValueError:
+            suggested_due = None
+
+    if result.kind == "thought":
+        return CaptureResult(
+            classification="thought", confidence=result.confidence, created_task_id=None,
+            undo_token=None, memory_stored=memory_stored, classifier_offline=classifier_offline,
+            suggested_category=suggested_category, suggested_due=suggested_due, raw_text=raw_text,
+        )
+    if result.kind == "resurface":
+        trigger = (today + timedelta(days=DEFAULT_RESURFACE_OFFSET_DAYS)).isoformat()
+        write_resurface(deps, text=raw_text, trigger_date=trigger, trigger_raw=None)
+        return CaptureResult(
+            classification="resurface", confidence=result.confidence, created_task_id=None,
+            undo_token=None, memory_stored=memory_stored, classifier_offline=classifier_offline,
+            suggested_category=suggested_category, suggested_due=suggested_due, raw_text=raw_text,
+        )
+    if result.kind == "ambiguous" or (result.kind == "task" and result.confidence < HIGH_CONFIDENCE):
+        return CaptureResult(
+            classification="ambiguous", confidence=result.confidence, created_task_id=None,
+            undo_token=None, memory_stored=memory_stored, classifier_offline=classifier_offline,
+            suggested_category=suggested_category, suggested_due=suggested_due, raw_text=raw_text,
+        )
+
+    suggested = result.suggested_task
+    if suggested is None:
+        return CaptureResult(
+            classification="ambiguous", confidence=result.confidence, created_task_id=None,
+            undo_token=None, memory_stored=memory_stored, classifier_offline=classifier_offline,
+            suggested_category=suggested_category, suggested_due=suggested_due, raw_text=raw_text,
+        )
+    due = suggested.due or (today + timedelta(days=DEFAULT_TASK_DUE_OFFSET_DAYS)).isoformat()
+    existing = {t.id for t in deps.tasks.list()}
+    task_id = _task_id_from(suggested.category, suggested.name, existing)
+    task = Task(
+        id=task_id, course=suggested.category, name=suggested.name, due=due,
+        type=suggested.type, weight=suggested.weight or "", done=False, notes=None,
+    )
+    deps.tasks.add(task)
+    deps.undo.register(chat_id=chat_id, message_id=message_id, task_id=task_id)
+    undo_token = f"{chat_id}-{message_id}"
+    return CaptureResult(
+        classification="task", confidence=result.confidence, created_task_id=task_id,
+        undo_token=undo_token, memory_stored=memory_stored, classifier_offline=False,
+        suggested_category=suggested.category, suggested_due=_date_type.fromisoformat(due),
+        raw_text=raw_text,
     )
 
 
@@ -285,3 +379,18 @@ def write_resurface(deps: CaptureDeps, *, text: str, trigger_date: str | None, t
     deps.resurface_path.parent.mkdir(parents=True, exist_ok=True)
     with deps.resurface_path.open("a") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+def capture_result_to_json(r: CaptureResult) -> dict:
+    """Render a CaptureResult as the JSON response body for /api/capture/note."""
+    return {
+        "classification": r.classification,
+        "confidence": round(r.confidence, 3),
+        "created_task_id": r.created_task_id,
+        "undo_token": r.undo_token,
+        "memory_stored": r.memory_stored,
+        "classifier_offline": r.classifier_offline,
+        "suggested_category": r.suggested_category,
+        "suggested_due": r.suggested_due.isoformat() if r.suggested_due else None,
+        "raw_text": r.raw_text,
+    }
