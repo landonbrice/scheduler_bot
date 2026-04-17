@@ -17,3 +17,5 @@ data/membase_pending.jsonl
 data/resurface.jsonl
 data/schedule.json
 data/dismissed.jsonl
+data/categories.json
+data/settings.json

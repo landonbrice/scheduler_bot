@@ -176,6 +176,35 @@ def test_suggest_requires_auth(client):
     assert resp.status_code == 401
 
 
+def test_settings_get_requires_auth(client):
+    assert client.get("/api/settings").status_code == 401
+
+
+def test_settings_put_requires_auth(client):
+    assert client.put(
+        "/api/settings",
+        json={"included_calendar_ids": [], "show_priority_score": False},
+    ).status_code == 401
+
+
+def test_settings_round_trip(client, tmp_path, monkeypatch):
+    from backend import server as srv
+    p = tmp_path / "settings.json"
+    monkeypatch.setattr(srv, "_settings_path", p)
+    body = {"included_calendar_ids": ["primary", "c2"], "show_priority_score": True}
+    assert client.put(
+        "/api/settings",
+        json=body,
+        headers={"X-Telegram-Init-Data": _init_data()},
+    ).status_code == 200
+    got = client.get(
+        "/api/settings",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    ).json()
+    assert got["settings"]["included_calendar_ids"] == ["primary", "c2"]
+    assert got["settings"]["show_priority_score"] is True
+
+
 def test_suggest_ratelimit_falls_back(client, monkeypatch):
     from backend import server as srv
     from backend.suggest import RateLimiter

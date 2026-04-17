@@ -77,4 +77,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text }),
     }),
+  getSettings: () =>
+    request<{
+      settings: {
+        included_calendar_ids: string[];
+        show_priority_score: boolean;
+      };
+      categories: Record<string, { label: string; color: string }>;
+    }>(`/api/settings`),
+  putSettings: (body: {
+    included_calendar_ids: string[];
+    show_priority_score: boolean;
+  }) =>
+    request<{ ok: boolean }>(`/api/settings`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  putCategories: (
+    categories: Record<string, { label: string; color: string }>,
+  ) =>
+    request<{ ok: boolean }>(`/api/categories`, {
+      method: "PUT",
+      body: JSON.stringify({ categories }),
+    }),
+  listAvailableCalendars: () =>
+    request<{ calendars: { id: string; summary: string }[] }>(
+      `/api/calendars/available`,
+    ),
 };

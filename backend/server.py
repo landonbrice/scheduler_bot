@@ -230,6 +230,62 @@ async def api_suggest(duration: int, start_iso: str, user: TelegramUser = Depend
 
 _dismissed_path = PROJECT_ROOT / "data" / "dismissed.jsonl"
 _resurface_path = PROJECT_ROOT / "data" / "resurface.jsonl"
+_settings_path = PROJECT_ROOT / "data" / "settings.json"
+_categories_path = PROJECT_ROOT / "data" / "categories.json"
+
+
+def _load_json(path: Path, default):
+    try:
+        return _json.loads(path.read_text())
+    except (FileNotFoundError, _json.JSONDecodeError):
+        return default
+
+
+def _atomic_write_json(path: Path, obj) -> None:
+    import os as _os
+    import tempfile as _tf
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = _tf.mkstemp(dir=str(path.parent))
+    with _os.fdopen(fd, "w") as f:
+        f.write(_json.dumps(obj, indent=2))
+    _os.replace(tmp, path)
+
+
+@app.get("/api/settings")
+def get_settings(_: TelegramUser = Depends(current_user)):
+    s = _load_json(
+        _settings_path,
+        {"included_calendar_ids": [], "show_priority_score": False},
+    )
+    c = _load_json(_categories_path, {})
+    return {"settings": s, "categories": c}
+
+
+class SettingsBody(BaseModel):
+    included_calendar_ids: list[str]
+    show_priority_score: bool
+
+
+@app.put("/api/settings")
+def put_settings(body: SettingsBody, _: TelegramUser = Depends(current_user)):
+    _atomic_write_json(_settings_path, body.model_dump())
+    return {"ok": True}
+
+
+class CategoriesBody(BaseModel):
+    categories: dict
+
+
+@app.put("/api/categories")
+def put_categories(body: CategoriesBody, _: TelegramUser = Depends(current_user)):
+    _atomic_write_json(_categories_path, body.categories)
+    return {"ok": True}
+
+
+@app.get("/api/calendars/available")
+def get_available_calendars(_: TelegramUser = Depends(current_user)):
+    from .gcal import list_available_calendars
+    return {"calendars": list_available_calendars()}
 
 
 def _load_resurface_by_day(week_start, week_end) -> dict:
