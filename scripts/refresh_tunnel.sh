@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 PROJECT_ROOT="$(pwd)"
 
 API_PORT="${API_PORT:-8000}"
-LOG_FILE="$(mktemp /tmp/cloudflared.XXXXXX.log)"
+LOG_FILE="$(mktemp -t cloudflared).log"
 URL_FILE="$PROJECT_ROOT/.tunnel_url"
 ENV_FILE="$PROJECT_ROOT/.env"
 
