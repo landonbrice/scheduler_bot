@@ -169,3 +169,25 @@ def test_dismiss_appends_entry(client, tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert p.exists()
     assert "m42" in p.read_text()
+
+
+def test_suggest_requires_auth(client):
+    resp = client.get("/api/suggest?duration=60&start_iso=2026-04-17T10:00:00-05:00")
+    assert resp.status_code == 401
+
+
+def test_suggest_ratelimit_falls_back(client, monkeypatch):
+    from backend import server as srv
+    from backend.suggest import RateLimiter
+    monkeypatch.setattr(srv, "_suggest_rl", RateLimiter(capacity=1, refill_per_minute=1))
+    r1 = client.get(
+        "/api/suggest?duration=60&start_iso=2026-04-17T10:00:00-05:00",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert r1.status_code == 200
+    r2 = client.get(
+        "/api/suggest?duration=60&start_iso=2026-04-17T10:00:00-05:00",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert r2.status_code == 200
+    assert r2.json().get("rate_limited") is True or r2.json().get("source") == "fallback"

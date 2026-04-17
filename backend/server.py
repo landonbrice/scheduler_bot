@@ -23,6 +23,7 @@ from .memory import search_memory as _search_memory
 from .memory import store_memory as _store_memory_fn
 from .pending_queue import PendingQueue
 from .schedule import load_schedule, week_instances
+from .suggest import pick_task, RateLimiter
 from .surfacing import surface_week, load_dismissed
 from .tasks_store import Task, TasksStore, TaskNotFoundError
 from .undo_buffer import UndoBuffer
@@ -35,6 +36,7 @@ _data_dir = Path(settings.tasks_path).parent
 _server_classifier = _default_classify
 _server_undo = UndoBuffer(ttl_seconds=60)
 _server_pending = PendingQueue(_data_dir / "membase_pending.jsonl")
+_suggest_rl = RateLimiter(capacity=5, refill_per_minute=5)
 app = FastAPI(title="Academic Scheduler API")
 
 app.add_middleware(
@@ -211,6 +213,19 @@ def get_briefing(_: TelegramUser = Depends(current_user)):
     events = fetch_events(date.today(), days=1)
     text = generate_briefing(store.list(), today=date.today(), events=events)
     return {"text": text}
+
+
+@app.get("/api/suggest")
+async def api_suggest(duration: int, start_iso: str, user: TelegramUser = Depends(current_user)):
+    now = datetime.now()
+    if not _suggest_rl.allow(str(user.user_id), now):
+        # Rate-limit trip → fallback, not 429.
+        from .suggest import _fallback
+        return {**_fallback(store.list(), duration, now), "rate_limited": True}
+    result = await pick_task(
+        tasks=store.list(), duration_min=duration, start_iso=start_iso, now=now,
+    )
+    return result
 
 
 _dismissed_path = PROJECT_ROOT / "data" / "dismissed.jsonl"
