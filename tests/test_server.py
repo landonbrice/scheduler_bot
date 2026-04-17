@@ -102,3 +102,15 @@ def test_calendar_endpoint_returns_events_list(client, monkeypatch):
 def test_calendar_endpoint_requires_auth(client):
     r = client.get("/api/calendar")
     assert r.status_code == 401
+
+
+def test_tasks_endpoint_includes_priority_score_and_tier(client):
+    resp = client.get("/api/tasks", headers={"X-Telegram-Init-Data": _init_data()})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tasks"], "need at least one seeded task for this assertion"
+    for t in body["tasks"]:
+        assert "priority_score" in t
+        assert "tier" in t
+        assert t["tier"] in ("red", "amber", "neutral")
+        assert 0.0 <= t["priority_score"] <= 300.0

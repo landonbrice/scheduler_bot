@@ -22,6 +22,8 @@ class Task:
     weight: str
     done: bool
     notes: Optional[str] = None
+    impact_override: Optional[str] = None  # "critical" | "high" | "medium" | "low" | None
+    priority_boost: Optional[float] = None  # None ≡ 1.0
 
 
 class TasksStore:

@@ -1,13 +1,14 @@
 from __future__ import annotations
 import re
 import uuid
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import priority
 from .auth import verify_init_data, InitDataInvalid, TelegramUser
 from .briefing import generate_briefing
 from .config import load_settings, PROJECT_ROOT
@@ -51,7 +52,13 @@ class AddTaskBody(BaseModel):
 
 @app.get("/api/tasks")
 def get_tasks(_: TelegramUser = Depends(current_user)):
-    return {"tasks": [t.__dict__ for t in store.list()]}
+    now = datetime.now()
+    enriched = []
+    for t in store.list():
+        score = priority.compute(t, now)
+        tier_ = priority.tier(score, urgent_flag=(t.priority_boost == 1.5))
+        enriched.append({**t.__dict__, "priority_score": round(score, 2), "tier": tier_})
+    return {"tasks": enriched}
 
 
 @app.post("/api/tasks/{task_id}/done")
