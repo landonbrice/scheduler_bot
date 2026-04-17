@@ -57,6 +57,16 @@ class TasksStore:
                     return
             raise TaskNotFoundError(task_id)
 
+    def set_priority_boost(self, task_id: str, boost: float | None) -> None:
+        with self._lock:
+            tasks = self._read()
+            for t in tasks:
+                if t["id"] == task_id:
+                    t["priority_boost"] = boost
+                    self._write(tasks)
+                    return
+            raise TaskNotFoundError(task_id)
+
     def replace_all(self, tasks: list[Task]) -> None:
         with self._lock:
             self._write([asdict(t) for t in tasks])

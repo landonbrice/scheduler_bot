@@ -1,6 +1,8 @@
 from __future__ import annotations
 import json as _json
 import re
+import sys
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone as _tz
 from datetime import datetime as _dt2
@@ -13,17 +15,26 @@ from pydantic import BaseModel
 from . import priority
 from .auth import verify_init_data, InitDataInvalid, TelegramUser
 from .briefing import generate_briefing
+from .capture import CaptureDeps, process_note_v2, capture_result_to_json
+from .classifier import classify as _default_classify
 from .config import load_settings, PROJECT_ROOT
 from .gcal import fetch_events
 from .memory import search_memory as _search_memory
+from .memory import store_memory as _store_memory_fn
+from .pending_queue import PendingQueue
 from .schedule import load_schedule, week_instances
 from .surfacing import surface_week, load_dismissed
 from .tasks_store import Task, TasksStore, TaskNotFoundError
+from .undo_buffer import UndoBuffer
 
 
 settings = load_settings()
 store = TasksStore(settings.tasks_path)
 _schedule_path = PROJECT_ROOT / "data" / "schedule.json"
+_data_dir = Path(settings.tasks_path).parent
+_server_classifier = _default_classify
+_server_undo = UndoBuffer(ttl_seconds=60)
+_server_pending = PendingQueue(_data_dir / "membase_pending.jsonl")
 app = FastAPI(title="Academic Scheduler API")
 
 app.add_middleware(
@@ -106,6 +117,58 @@ def add_task(body: AddTaskBody, _: TelegramUser = Depends(current_user)):
     )
     store.add(task)
     return {"task": task.__dict__}
+
+
+def _server_deps() -> CaptureDeps:
+    this_mod = sys.modules[__name__]
+    return CaptureDeps(
+        tasks=store,
+        undo=_server_undo,
+        pending=_server_pending,
+        memory_store=_store_memory_fn,
+        classifier=this_mod._server_classifier,
+        today_fn=lambda: date.today(),
+        resurface_path=_data_dir / "resurface.jsonl",
+    )
+
+
+class CaptureNoteBody(BaseModel):
+    text: str
+
+
+@app.post("/api/capture/note")
+async def api_capture_note(
+    body: CaptureNoteBody,
+    user: TelegramUser = Depends(current_user),
+):
+    chat_id = int(user.user_id)
+    # Different Mini App captures must not collide on (chat_id, message_id).
+    message_id = int(time.time() * 1000) % 1_000_000_000
+    r = await process_note_v2(
+        body.text, chat_id=chat_id, message_id=message_id, deps=_server_deps(),
+    )
+    return capture_result_to_json(r)
+
+
+@app.post("/api/tasks/{task_id}/flag")
+def flag_task(task_id: str, _: TelegramUser = Depends(current_user)):
+    tasks = {t.id: t for t in store.list()}
+    if task_id not in tasks:
+        raise HTTPException(404, f"no task {task_id!r}")
+    current = tasks[task_id].priority_boost
+    new_val = None if current == 1.5 else 1.5
+    store.set_priority_boost(task_id, new_val)
+    return {"task_id": task_id, "priority_boost": new_val}
+
+
+@app.post("/api/tasks/{task_id}/undo-create")
+def undo_create(task_id: str, _: TelegramUser = Depends(current_user)):
+    before = store.list()
+    remaining = [t for t in before if t.id != task_id]
+    if len(remaining) == len(before):
+        raise HTTPException(404, f"no task {task_id!r}")
+    store.replace_all(remaining)
+    return {"ok": True, "deleted": task_id}
 
 
 @app.get("/api/calendar")
