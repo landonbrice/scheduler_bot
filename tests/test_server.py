@@ -114,3 +114,19 @@ def test_tasks_endpoint_includes_priority_score_and_tier(client):
         assert "tier" in t
         assert t["tier"] in ("red", "amber", "neutral")
         assert 0.0 <= t["priority_score"] <= 300.0
+
+
+def test_schedule_endpoint_requires_auth(client):
+    resp = client.get("/api/schedule")
+    assert resp.status_code == 401
+
+
+def test_schedule_endpoint_returns_week(client):
+    resp = client.get(
+        "/api/schedule?start=2026-04-13",
+        headers={"X-Telegram-Init-Data": _init_data()},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["week_start"] == "2026-04-13"
+    assert isinstance(body["instances"], list)

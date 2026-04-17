@@ -15,3 +15,4 @@ frontend/tsconfig.tsbuildinfo
 .worktrees/
 data/membase_pending.jsonl
 data/resurface.jsonl
+data/schedule.json

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,11 +13,13 @@ from .auth import verify_init_data, InitDataInvalid, TelegramUser
 from .briefing import generate_briefing
 from .config import load_settings, PROJECT_ROOT
 from .gcal import fetch_events
+from .schedule import load_schedule, week_instances
 from .tasks_store import Task, TasksStore, TaskNotFoundError
 
 
 settings = load_settings()
 store = TasksStore(settings.tasks_path)
+_schedule_path = PROJECT_ROOT / "data" / "schedule.json"
 app = FastAPI(title="Academic Scheduler API")
 
 app.add_middleware(
@@ -106,6 +108,34 @@ def add_task(body: AddTaskBody, _: TelegramUser = Depends(current_user)):
 def get_calendar(_: TelegramUser = Depends(current_user)):
     events = fetch_events(date.today(), days=7)
     return {"events": [e.as_dict() for e in events]}
+
+
+@app.get("/api/schedule")
+def get_schedule(
+    start: str | None = None,
+    _: TelegramUser = Depends(current_user),
+):
+    sched = load_schedule(_schedule_path)
+    if start:
+        try:
+            week_start = date.fromisoformat(start)
+        except ValueError:
+            raise HTTPException(400, "start must be ISO YYYY-MM-DD")
+    else:
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())  # Monday
+    instances = week_instances(sched, week_start=week_start)
+    return {
+        "term_start": sched.term_start.isoformat() if sched.term_start else None,
+        "term_end": sched.term_end.isoformat() if sched.term_end else None,
+        "week_start": week_start.isoformat(),
+        "instances": [
+            {"title": i.title, "category": i.category,
+             "date": i.instance_date.isoformat(),
+             "start": i.start, "end": i.end, "location": i.location}
+            for i in instances
+        ],
+    }
 
 
 @app.get("/api/briefing")
