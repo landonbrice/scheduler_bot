@@ -5,7 +5,7 @@ import { tg } from "./telegram";
 import "./index.css";
 
 tg()?.ready();
-tg()?.expand();
+tg()?.expand?.();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

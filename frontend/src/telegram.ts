@@ -1,7 +1,8 @@
 type WebApp = {
   initData: string;
   ready: () => void;
-  expand: () => void;
+  expand?(): void;
+  disableVerticalSwipes?(): void;
   HapticFeedback?: { impactOccurred: (s: "light" | "medium" | "heavy") => void };
   colorScheme: "light" | "dark";
 };
