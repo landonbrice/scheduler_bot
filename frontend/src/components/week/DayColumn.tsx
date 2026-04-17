@@ -100,10 +100,10 @@ export function DayColumn({
 
   return (
     <div
-      className="flex-shrink-0 flex flex-col relative"
+      className="flex flex-col relative"
       data-today={isToday || undefined}
       style={{
-        width: 260,
+        width: "100%",
         background: "var(--surface-card)",
         borderRadius: "var(--radius-card)",
         padding: "var(--space-5) var(--space-4) var(--space-6)",

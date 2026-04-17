@@ -69,7 +69,6 @@ export function TaskPill({
       tabIndex={0}
       onClick={handlePillClick}
       {...swipe}
-      onTouchMove={(e) => e.stopPropagation()}
       data-urgent={urgent || undefined}
       data-due={tier === "amber" ? "today" : undefined}
       data-task-id={task.id}
@@ -85,6 +84,7 @@ export function TaskPill({
         color: "var(--ink-primary)",
         fontFamily: "var(--font-body)",
         boxShadow: "var(--shadow-pill)",
+        touchAction: "pan-y",
       }}
     >
       {/* Checkbox */}

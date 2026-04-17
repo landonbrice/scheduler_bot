@@ -33,6 +33,13 @@ function toISODate(d: Date): string {
 }
 
 export default function App() {
+  useEffect(() => {
+    const tg = window.Telegram?.WebApp;
+    if (!tg) return;
+    try { tg.expand?.(); } catch { /* no-op on older clients */ }
+    try { tg.disableVerticalSwipes?.(); } catch { /* no-op on older clients */ }
+  }, []);
+
   const [tab, setTab] = useState<Tab>("week");
   const [tasks, setTasks] = useState<TaskWithPriority[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
